@@ -83,7 +83,13 @@ class WorkflowValidator(CamelSnakeSerializer):
 
         # Determine if this is an update or create operation
         if input_id:
-            instance = Model.objects.get(id=input_id)
+            try:
+                instance = Model.objects.get(
+                    id=input_id, organization_id=self.context["organization"].id
+                )
+            except Model.DoesNotExist:
+                raise serializers.ValidationError(f"Invalid Condition Group ID {input_id}")
+
             # partial update since we are updating an existing instance
             # https://www.django-rest-framework.org/api-guide/serializers/#partial-updates
             partial = True
@@ -100,16 +106,22 @@ class WorkflowValidator(CamelSnakeSerializer):
     def _update_or_create_action(
         self,
         input_data: dict[str, Any],
+        condition_group: DataConditionGroup,
     ) -> Action:
         # Validating actions hits external APIs. We already validated the data with WorkflowValidator.is_valid().
         # Avoid re-validating the data by saving the Action directly.
 
         input_id = input_data.get("id")
-        instance = None
 
         # Determine if this is an update or create operation
         if input_id:
-            instance = Action.objects.get(id=input_id)
+            try:
+                instance = Action.objects.get(
+                    id=input_id, dataconditiongroupaction__condition_group=condition_group
+                )
+            except Action.DoesNotExist:
+                raise serializers.ValidationError(f"Invalid Action ID {input_id}")
+
             instance.update(**input_data)
             return instance
 
@@ -125,7 +137,7 @@ class WorkflowValidator(CamelSnakeSerializer):
         )
 
         for action in actions_data:
-            action_instance = self._update_or_create_action(action)
+            action_instance = self._update_or_create_action(action, condition_group)
 
             # If this is a new action, associate it to the condition group
             if action.get("id") is None:
@@ -169,7 +181,15 @@ class WorkflowValidator(CamelSnakeSerializer):
             action_filters, instance.workflowdataconditiongroup_set, "condition_group__id"
         )
 
+        workflow_condition_group_ids = set(
+            instance.workflowdataconditiongroup_set.values_list("condition_group_id", flat=True)
+        )
+
         for action_filter in action_filters:
+            action_filter_id = action_filter.get("id")
+            if action_filter_id and int(action_filter_id) not in workflow_condition_group_ids:
+                raise serializers.ValidationError(f"Invalid Condition Group ID {action_filter_id}")
+
             condition_group = self.update_or_create_data_condition_group(action_filter)
             filters.append(condition_group)
 

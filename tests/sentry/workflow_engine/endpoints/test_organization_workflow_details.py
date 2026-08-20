@@ -251,6 +251,63 @@ class OrganizationUpdateWorkflowTest(OrganizationWorkflowDetailsBaseTest, BaseWo
         assert workflow.when_condition_group is not None
         assert workflow.when_condition_group.conditions.count() == 0
 
+    def test_update_triggers_with_condition_from_another_organization(self) -> None:
+        other_org = self.create_organization()
+        other_condition_group = self.create_data_condition_group(organization=other_org)
+        other_condition = self.create_data_condition(
+            condition_group=other_condition_group,
+            type=Condition.EQUAL,
+            comparison=1,
+            condition_result=True,
+        )
+
+        data = {
+            **self.valid_workflow,
+            "triggers": {
+                "logicType": "any",
+                "conditions": [
+                    {
+                        "id": str(other_condition.id),
+                        "type": Condition.EQUAL.value,
+                        "comparison": 2,
+                        "conditionResult": False,
+                    }
+                ],
+            },
+        }
+
+        self.get_error_response(
+            self.organization.slug, self.workflow.id, raw_data=data, status_code=400
+        )
+
+        other_condition.refresh_from_db()
+        assert other_condition.condition_group_id == other_condition_group.id
+        assert other_condition.comparison == 1
+        assert other_condition.condition_result is True
+
+    def test_update_action_filter_from_another_organization(self) -> None:
+        other_org = self.create_organization()
+        other_condition_group = self.create_data_condition_group(organization=other_org)
+
+        data = {
+            **self.valid_workflow,
+            "actionFilters": [
+                {
+                    "id": str(other_condition_group.id),
+                    "logicType": "all",
+                    "conditions": [],
+                    "actions": [],
+                }
+            ],
+        }
+
+        self.get_error_response(
+            self.organization.slug, self.workflow.id, raw_data=data, status_code=400
+        )
+
+        other_condition_group.refresh_from_db()
+        assert other_condition_group.logic_type == DataConditionGroup.Type.ANY
+
     def test_update_detectors_add_detector(self) -> None:
         detector1 = self.create_detector(project=self.project)
         detector2 = self.create_detector(project=self.project, type=MetricIssue.slug)
