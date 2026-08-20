@@ -1,5 +1,7 @@
 from django.urls import reverse
 
+from sentry.api.endpoints.setup_wizard import SETUP_WIZARD_CACHE_KEY, SETUP_WIZARD_CACHE_TIMEOUT
+from sentry.cache import default_cache
 from sentry.testutils.cases import APITestCase
 from sentry.testutils.silo import control_silo_test
 
@@ -47,3 +49,19 @@ class SetupWizardTest(APITestCase):
 
         response5 = self.client.get(url2)
         assert response5.status_code == 404, response5.content
+
+    def test_read_is_only_possible_once(self) -> None:
+        wizard_hash = "abc"
+        key = f"{SETUP_WIZARD_CACHE_KEY}{wizard_hash}"
+        default_cache.set(key, {"apiKeys": {"token": "sntrys_token"}}, SETUP_WIZARD_CACHE_TIMEOUT)
+
+        url = reverse("sentry-api-0-project-wizard", kwargs={"wizard_hash": wizard_hash})
+
+        response = self.client.get(url)
+        assert response.status_code == 200, response.content
+        assert response.data["apiKeys"]["token"] == "sntrys_token"
+
+        # The token must not be handed out a second time
+        response = self.client.get(url)
+        assert response.status_code == 404, response.content
+        assert default_cache.get(key) is None

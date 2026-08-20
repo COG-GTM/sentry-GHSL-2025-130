@@ -35,6 +35,7 @@ const CREATE_PROJECT_VALUE = 'create-new-project';
 const urlParams = new URLSearchParams(location.search);
 const platformParam = urlParams.get('project_platform');
 const orgSlugParam = urlParams.get('org_slug');
+const projectSlugParam = urlParams.get('project_slug');
 
 function getOrgDisplayName(organization: Organization) {
   return organization.name || organization.slug;
@@ -77,7 +78,7 @@ export function WizardProjectSelection({
   hash: string;
   organizations: OrganizationWithRegion[];
 }) {
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(projectSlugParam ?? '');
 
   const debouncedSearch = useDebouncedValue(search, 300);
   const isSearchStale = search !== debouncedSearch;
@@ -173,6 +174,20 @@ export function WizardProjectSelection({
         })),
     []
   );
+
+  // Pre-select the project given via the project_slug URL param. The user still has to
+  // confirm the selection, as submitting the form mints an organization auth token.
+  const [hasPreselectedProject, setHasPreselectedProject] = useState(!projectSlugParam);
+  useEffect(() => {
+    if (hasPreselectedProject) {
+      return;
+    }
+    const match = cachedProjectOptions.find(option => option.label === projectSlugParam);
+    if (match) {
+      setSelectedProjectId(match.value);
+      setHasPreselectedProject(true);
+    }
+  }, [cachedProjectOptions, hasPreselectedProject]);
 
   // Set the selected project to the first option if there is only one
   useEffect(() => {

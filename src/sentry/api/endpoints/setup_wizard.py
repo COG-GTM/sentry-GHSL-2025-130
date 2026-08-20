@@ -13,6 +13,8 @@ from sentry.api.base import Endpoint, control_silo_endpoint
 from sentry.api.serializers import serialize
 from sentry.cache import default_cache
 from sentry.demo_mode.utils import is_demo_user
+from sentry.ratelimits.config import RateLimitConfig
+from sentry.types.ratelimit import RateLimit, RateLimitCategory
 
 logger = logging.getLogger("sentry.api")
 SETUP_WIZARD_CACHE_KEY = "setup-wizard-keys:v1:"
@@ -27,6 +29,21 @@ class SetupWizard(Endpoint):
         "GET": ApiPublishStatus.EXPERIMENTAL,
     }
     permission_classes = ()
+    enforce_rate_limit = True
+    rate_limits = RateLimitConfig(
+        limit_overrides={
+            "GET": {
+                RateLimitCategory.IP: RateLimit(limit=30, window=60),
+                RateLimitCategory.USER: RateLimit(limit=30, window=60),
+                RateLimitCategory.ORGANIZATION: RateLimit(limit=30, window=60),
+            },
+            "DELETE": {
+                RateLimitCategory.IP: RateLimit(limit=30, window=60),
+                RateLimitCategory.USER: RateLimit(limit=30, window=60),
+                RateLimitCategory.ORGANIZATION: RateLimit(limit=30, window=60),
+            },
+        }
+    )
 
     def delete(self, request: Request, wizard_hash=None) -> Response | None:
         """
@@ -55,6 +72,10 @@ class SetupWizard(Endpoint):
             elif wizard_data == "empty":
                 # when we just created a clean cache
                 return Response(status=400)
+
+            # The payload holds a freshly minted org auth token in plaintext, so it may
+            # only ever be handed out once. Anyone replaying the hash afterwards gets a 404.
+            default_cache.delete(key)
 
             return Response(serialize(wizard_data))
         else:

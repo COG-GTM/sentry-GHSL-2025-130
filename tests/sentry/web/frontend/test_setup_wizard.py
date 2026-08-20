@@ -3,6 +3,7 @@ from django.urls import reverse
 
 from sentry.api.endpoints.setup_wizard import SETUP_WIZARD_CACHE_KEY
 from sentry.cache import default_cache
+from sentry.models.orgauthtoken import OrgAuthToken
 from sentry.testutils.cases import PermissionTestCase
 from sentry.testutils.helpers.options import override_options
 from sentry.testutils.silo import control_silo_test
@@ -65,7 +66,7 @@ class SetupWizard(PermissionTestCase):
 
         assert cached == "test"
 
-    def test_skips_selection_when_given_org_and_project_slug_and(self) -> None:
+    def test_does_not_fill_cache_when_given_org_and_project_slug(self) -> None:
         self.org = self.create_organization(owner=self.user)
         self.team = self.create_team(organization=self.org, name="Mariachi Band")
         self.project = self.create_project(organization=self.org, teams=[self.team], name="Bengal")
@@ -80,12 +81,12 @@ class SetupWizard(PermissionTestCase):
 
         assert resp.status_code == 200
         self.assertTemplateUsed(resp, "sentry/setup-wizard.html")
-        assert resp.context["enableProjectSelection"] is False
-        cached = default_cache.get(key)
+        assert resp.context["enableProjectSelection"] is True
 
-        assert len(cached.get("projects")) == 1
-        cached_project = cached.get("projects")[0]
-        assert cached_project.get("id") == self.project.id
+        # A GET must not mint an org auth token or fill the cache, it only renders the
+        # selection which the user confirms through the CSRF protected POST
+        assert default_cache.get(key) == "test"
+        assert not OrgAuthToken.objects.filter(organization_id=self.org.id).exists()
 
     def test_renders_selection_when_given_only_org_slug(self) -> None:
         self.org = self.create_organization(owner=self.user)
