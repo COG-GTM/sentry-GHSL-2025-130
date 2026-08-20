@@ -189,6 +189,25 @@ class OrganizationMemberReinviteTest(APITestCase):
             self.organization.slug, invite.id, trigger_regenerate_token=1, status_code=400
         )
 
+    @patch("sentry.models.OrganizationMemberInvite.send_invite_email")
+    def test_cannot_resend_invite_from_another_org(self, mock_send_invite_email):
+        other_org = self.create_organization(slug="other-org", owner=self.user)
+        other_org_invite = self.create_member_invite(
+            organization=other_org, email="genmaicha@tea.com", role="member"
+        )
+        old_token = other_org_invite.token
+
+        self.get_error_response(
+            self.organization.slug,
+            other_org_invite.id,
+            trigger_regenerate_token=1,
+            status_code=404,
+        )
+
+        assert not mock_send_invite_email.mock_calls
+        other_org_invite = OrganizationMemberInvite.objects.get(id=other_org_invite.id)
+        assert other_org_invite.token == old_token
+
     def test_other_org_admin_cannot_resend_invite(self):
         org = self.create_organization(slug="other-org")
         other_admin_user = self.create_user("other-admin@email.com")
