@@ -52,6 +52,11 @@ def verify_signature(request):
     signature = request.META.get("HTTP_X_VERCEL_SIGNATURE")
     secret = options.get("vercel.client-secret")
 
+    # Without a configured secret every signature would validate against an empty
+    # key, so fail closed instead.
+    if not signature or not secret:
+        return False
+
     expected = hmac.new(
         key=secret.encode("utf-8"), msg=bytes(request.body), digestmod=hashlib.sha1
     ).hexdigest()
@@ -160,14 +165,19 @@ class VercelWebhookEndpoint(Endpoint):
         )
         return external_id
 
-    def post(self, request: Request) -> Response | None:
+    def reject_unsigned_request(self, request: Request) -> Response | None:
         if not request.META.get("HTTP_X_VERCEL_SIGNATURE"):
             logger.error("vercel.webhook.missing-signature")
             return self.respond(status=401)
-        is_valid = verify_signature(request)
-        if not is_valid:
+        if not verify_signature(request):
             logger.error("vercel.webhook.invalid-signature")
             return self.respond(status=401)
+        return None
+
+    def post(self, request: Request) -> Response | None:
+        unsigned_response = self.reject_unsigned_request(request)
+        if unsigned_response is not None:
+            return unsigned_response
 
         # Vercel's webhook allows you to subscribe to different events,
         # denoted by the `type` attribute. We currently subscribe to:
@@ -188,6 +198,10 @@ class VercelWebhookEndpoint(Endpoint):
         return None
 
     def delete(self, request: Request):
+        unsigned_response = self.reject_unsigned_request(request)
+        if unsigned_response is not None:
+            return unsigned_response
+
         external_id = self.parse_external_id(request)
         configuration_id = request.data["payload"]["configuration"]["id"]
 
