@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import timedelta
@@ -37,6 +38,13 @@ FILTERED_EMAILS = {
     "action@github.com",
 }
 
+# a domain is a dot separated sequence of letter/digit/hyphen labels
+DOMAIN_RE = re.compile(
+    r"\A[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
+    r"(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+\Z"
+)
+MAX_DOMAIN_LENGTH = 253
+
 
 class MissingOrgMemberSerializer(Serializer):
     def serialize(self, obj, attrs, user, **kwargs):
@@ -71,9 +79,7 @@ def _get_missing_organization_members(
     org_id = organization.id
     domain_query = ""
     if shared_domain:
-        domain_query = (
-            f"AND (UPPER(sentry_commitauthor.email::text) LIKE UPPER('%%{shared_domain}'))"
-        )
+        domain_query = "AND (UPPER(sentry_commitauthor.email::text) LIKE UPPER(%(domain_pattern)s))"
     else:
         for filtered_email in FILTERED_EMAILS:
             domain_query += (
@@ -107,7 +113,6 @@ def _get_missing_organization_members(
                 )
         OR sentry_commitauthor.external_id IS NULL))
     """
-    # adding the extra domain query here prevents django raw from putting extra quotations around it
     query += domain_query
     query += """
         AND NOT (UPPER(sentry_commitauthor.email::text) LIKE UPPER('%%+%%'))
@@ -122,6 +127,9 @@ def _get_missing_organization_members(
         "integration_ids": tuple(integration_ids),
     }
 
+    if shared_domain:
+        param_dict["domain_pattern"] = "%" + shared_domain
+
     return list(CommitAuthor.objects.raw(query, param_dict))
 
 
@@ -135,6 +143,9 @@ def _get_shared_email_domain(organization: Organization) -> str | None:
         try:
             domain = Address(addr_spec=email).domain
         except Exception:
+            return None
+
+        if domain is None or len(domain) > MAX_DOMAIN_LENGTH or not DOMAIN_RE.match(domain):
             return None
 
         return domain
