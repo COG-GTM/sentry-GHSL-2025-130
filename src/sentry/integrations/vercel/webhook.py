@@ -48,9 +48,13 @@ class _ReleasePayload(TypedDict):
     refs: list[dict[str, str]]
 
 
-def verify_signature(request):
+def verify_signature(request) -> bool:
     signature = request.META.get("HTTP_X_VERCEL_SIGNATURE")
     secret = options.get("vercel.client-secret")
+
+    # Fail closed: without a configured secret no signature can be trusted.
+    if not signature or not secret:
+        return False
 
     expected = hmac.new(
         key=secret.encode("utf-8"), msg=bytes(request.body), digestmod=hashlib.sha1
@@ -160,14 +164,19 @@ class VercelWebhookEndpoint(Endpoint):
         )
         return external_id
 
-    def post(self, request: Request) -> Response | None:
+    def reject_unsigned_request(self, request: Request) -> Response | None:
         if not request.META.get("HTTP_X_VERCEL_SIGNATURE"):
             logger.error("vercel.webhook.missing-signature")
             return self.respond(status=401)
-        is_valid = verify_signature(request)
-        if not is_valid:
+        if not verify_signature(request):
             logger.error("vercel.webhook.invalid-signature")
             return self.respond(status=401)
+        return None
+
+    def post(self, request: Request) -> Response | None:
+        unauthorized = self.reject_unsigned_request(request)
+        if unauthorized is not None:
+            return unauthorized
 
         # Vercel's webhook allows you to subscribe to different events,
         # denoted by the `type` attribute. We currently subscribe to:
@@ -188,6 +197,10 @@ class VercelWebhookEndpoint(Endpoint):
         return None
 
     def delete(self, request: Request):
+        unauthorized = self.reject_unsigned_request(request)
+        if unauthorized is not None:
+            return unauthorized
+
         external_id = self.parse_external_id(request)
         configuration_id = request.data["payload"]["configuration"]["id"]
 
