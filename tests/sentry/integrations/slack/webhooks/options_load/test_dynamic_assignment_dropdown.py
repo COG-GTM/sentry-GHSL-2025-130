@@ -120,6 +120,22 @@ class DynamicAssignmentDropdownTest(BaseEventTest):
         assert resp.status_code == 200
         assert len(resp.data["option_groups"]) == 0
 
+    @freeze_time("2021-01-14T12:27:28.303Z")
+    def test_group_from_other_organization(self) -> None:
+        other_org = self.create_organization()
+        other_team = self.create_team(organization=other_org, name="aaaa", slug="aaaa")
+        other_project = self.create_project(organization=other_org, teams=[other_team])
+        other_group = self.create_group(project=other_project)
+        other_user = self.create_user(email="aaa@testing.com", name="Alice")
+        self.create_member(organization=other_org, user=other_user, teams=[other_team])
+        self.original_message["blocks"][0]["block_id"] = orjson.dumps(
+            {"issue": other_group.id}
+        ).decode()
+
+        resp = self.post_webhook(substring="aaa", original_message=self.original_message)
+
+        assert resp.status_code == 400
+
     def test_non_existent_group(self) -> None:
         self.original_message["blocks"][0]["block_id"] = orjson.dumps({"issue": 1}).decode()
         resp = self.post_webhook(substring="bbb", original_message=self.original_message)
