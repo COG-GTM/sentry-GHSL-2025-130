@@ -1,5 +1,6 @@
 from typing import Any
 
+from sentry.integrations.services.integration.service import integration_service
 from sentry.integrations.types import IntegrationProviderSlug
 from sentry.locks import locks
 from sentry.models.apitoken import generate_token
@@ -52,7 +53,15 @@ class BitbucketRepositoryProvider(IntegrationRepositoryProvider):
         installation = self.get_installation(data.get("installation"), organization.id)
         client = installation.get_client()
         try:
-            secret = installation.model.metadata.get("webhook_secret", "")
+            secret = installation.model.metadata.get("webhook_secret")
+            if not secret:
+                # older installations were created without one, and the webhook endpoint
+                # rejects payloads it cannot verify
+                secret = generate_token()
+                integration_service.update_integration(
+                    integration_id=installation.model.id,
+                    metadata={**installation.model.metadata, "webhook_secret": secret},
+                )
             resp = client.create_hook(
                 data["identifier"],
                 {

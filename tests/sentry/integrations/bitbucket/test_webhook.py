@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock, patch
+
+from django.test import override_settings
 
 from fixtures.bitbucket import PUSH_EVENT_EXAMPLE
 from sentry.integrations.bitbucket.webhook import PROVIDER_NAME, is_valid_signature
@@ -17,6 +21,11 @@ from sentry.testutils.silo import assume_test_silo_mode
 BAD_IP = "109.111.111.10"
 BITBUCKET_IP_IN_RANGE = "104.192.143.10"
 BITBUCKET_IP = "34.198.178.64"
+WEBHOOK_SECRET = "test_secret"
+
+
+def sign(body: bytes, secret: str = WEBHOOK_SECRET) -> str:
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
 
 class WebhookBaseTest(APITestCase):
@@ -27,12 +36,22 @@ class WebhookBaseTest(APITestCase):
         project = self.project  # force creation
         self.organization_id = project.organization.id
 
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            self.integration = self.create_provider_integration(
+                provider="bitbucket",
+                external_id="bitbucket_external_id",
+                name="Hello world",
+                metadata={"webhook_secret": WEBHOOK_SECRET},
+            )
+            self.integration.add_organization(self.organization)
+
     def send_webhook(self) -> None:
         self.get_success_response(
             self.organization_id,
             raw_data=PUSH_EVENT_EXAMPLE,
             extra_headers=dict(
                 HTTP_X_EVENT_KEY="repo:push",
+                HTTP_X_HUB_SIGNATURE=sign(PUSH_EVENT_EXAMPLE),
                 REMOTE_ADDR=BITBUCKET_IP,
             ),
             status_code=204,
@@ -65,6 +84,7 @@ class WebhookBaseTest(APITestCase):
                     external_id="{c78dfb25-7882-4550-97b1-4e0d38f32859}",
                     provider=PROVIDER_NAME,
                     name="maxbittker/newsdiffs",
+                    integration_id=self.integration.id,
                 ),
                 **kwargs,
             }
@@ -105,10 +125,79 @@ class WebhookTest(WebhookBaseTest):
             raw_data=PUSH_EVENT_EXAMPLE,
             extra_headers=dict(
                 HTTP_X_EVENT_KEY="repo:push",
+                HTTP_X_HUB_SIGNATURE=sign(PUSH_EVENT_EXAMPLE),
                 REMOTE_ADDR=BAD_IP,
             ),
             status_code=401,
         )
+
+    def test_forwarded_for_cannot_spoof_ip(self) -> None:
+        self.create_repository()
+
+        self.get_error_response(
+            self.organization_id,
+            raw_data=PUSH_EVENT_EXAMPLE,
+            extra_headers=dict(
+                HTTP_X_EVENT_KEY="repo:push",
+                HTTP_X_HUB_SIGNATURE=sign(PUSH_EVENT_EXAMPLE),
+                HTTP_X_FORWARDED_FOR=BITBUCKET_IP_IN_RANGE,
+                REMOTE_ADDR=BAD_IP,
+            ),
+            status_code=401,
+        )
+
+        assert not Commit.objects.filter(organization_id=self.organization_id).exists()
+
+    @override_settings(SENTRY_TRUSTED_PROXY_COUNT=1)
+    def test_forwarded_for_from_trusted_proxy(self) -> None:
+        self.create_repository()
+
+        self.get_success_response(
+            self.organization_id,
+            raw_data=PUSH_EVENT_EXAMPLE,
+            extra_headers=dict(
+                HTTP_X_EVENT_KEY="repo:push",
+                HTTP_X_HUB_SIGNATURE=sign(PUSH_EVENT_EXAMPLE),
+                HTTP_X_FORWARDED_FOR=f"{BAD_IP}, {BITBUCKET_IP_IN_RANGE}",
+                REMOTE_ADDR="10.0.0.1",
+            ),
+            status_code=204,
+        )
+
+        self.assert_commit()
+
+    def test_missing_webhook_secret(self) -> None:
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            self.integration.update(metadata={})
+
+        self.create_repository()
+
+        self.get_error_response(
+            self.organization_id,
+            raw_data=PUSH_EVENT_EXAMPLE,
+            extra_headers=dict(
+                HTTP_X_EVENT_KEY="repo:push",
+                REMOTE_ADDR=BITBUCKET_IP,
+            ),
+            status_code=401,
+        )
+
+        assert not Commit.objects.filter(organization_id=self.organization_id).exists()
+
+    def test_missing_integration(self) -> None:
+        self.create_repository(integration_id=None)
+
+        self.get_error_response(
+            self.organization_id,
+            raw_data=PUSH_EVENT_EXAMPLE,
+            extra_headers=dict(
+                HTTP_X_EVENT_KEY="repo:push",
+                REMOTE_ADDR=BITBUCKET_IP,
+            ),
+            status_code=401,
+        )
+
+        assert not Commit.objects.filter(organization_id=self.organization_id).exists()
 
 
 class PushEventWebhookTest(WebhookBaseTest):
@@ -201,17 +290,7 @@ class WebhookSignatureTest(WebhookBaseTest):
 
     def setUp(self) -> None:
         super().setUp()
-
-        with assume_test_silo_mode(SiloMode.CONTROL):
-            integration = self.create_provider_integration(
-                provider="bitbucket",
-                external_id="bitbucket_external_id",
-                name="Hello world",
-                metadata={"webhook_secret": "test_secret"},
-            )
-            integration.add_organization(self.organization)
-
-        self.create_repository(integration_id=integration.id)
+        self.create_repository()
 
     def send_signed_webhook(self):
         return self.get_response(

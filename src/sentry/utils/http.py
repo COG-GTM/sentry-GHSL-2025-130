@@ -19,6 +19,49 @@ class ParsedUriMatch(NamedTuple):
     path: str
 
 
+# `SetRemoteAddrFromForwardedFor` overwrites `REMOTE_ADDR` with a client controlled value,
+# and stashes the address of the actual peer under this key.
+PEER_ADDR_META_KEY = "sentry.peer_addr"
+
+
+def remove_port_number(ip_address: str) -> str:
+    if "[" in ip_address and "]" in ip_address:
+        # IPv6 address with brackets, possibly with a port number
+        return ip_address[ip_address.find("[") + 1 : ip_address.find("]")]
+    if "." in ip_address and ip_address.rfind(":") > ip_address.rfind("."):
+        # IPv4 address with port number
+        # the last condition excludes IPv4-mapped IPv6 addresses
+        return ip_address.rsplit(":", 1)[0]
+    return ip_address
+
+
+def get_trusted_remote_addr(request: HttpRequest) -> str | None:
+    """
+    Resolve the remote address of a request in a way a client cannot spoof.
+
+    `REMOTE_ADDR` is rewritten by `SetRemoteAddrFromForwardedFor` from the leftmost
+    `X-Forwarded-For` entry, which is fully attacker controlled on a direct request, so it
+    must not be used for authentication decisions. Only the last `SENTRY_TRUSTED_PROXY_COUNT`
+    entries of the chain were appended by proxies we run, and the first of those is the
+    address the outermost trusted proxy saw the request coming from.
+    """
+    peer_addr = request.META.get(PEER_ADDR_META_KEY) or request.META.get("REMOTE_ADDR")
+    trusted_proxy_count = getattr(settings, "SENTRY_TRUSTED_PROXY_COUNT", 0)
+    if trusted_proxy_count < 1:
+        return peer_addr
+
+    forwarded_for = [
+        value.strip()
+        for value in request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")
+        if value.strip()
+    ]
+    if len(forwarded_for) < trusted_proxy_count:
+        # fewer hops than expected: the request did not traverse the full proxy chain
+        return peer_addr
+
+    return remove_port_number(forwarded_for[-trusted_proxy_count])
+
+
 def absolute_uri(url: str | None = None, url_prefix: str | None = None) -> str:
     if url_prefix is None:
         url_prefix = options.get("system.url-prefix")

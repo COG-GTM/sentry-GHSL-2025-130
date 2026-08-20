@@ -30,6 +30,7 @@ from sentry.models.organization import Organization
 from sentry.models.repository import Repository
 from sentry.plugins.providers import IntegrationRepositoryProvider
 from sentry.utils.email import parse_email
+from sentry.utils.http import get_trusted_remote_addr
 
 logger = logging.getLogger("sentry.webhooks")
 
@@ -70,6 +71,12 @@ class WebhookInvalidSignatureException(SentryAPIException):
     status_code = 400
     code = f"{PROVIDER_NAME}.webhook.invalid-signature"
     message = "Webhook signature is invalid"
+
+
+class WebhookMissingSecretException(SentryAPIException):
+    status_code = 401
+    code = f"{PROVIDER_NAME}.webhook.missing-secret"
+    message = "No webhook secret is configured for this integration"
 
 
 class BitbucketWebhook(SCMWebhook, ABC):
@@ -207,8 +214,17 @@ class BitbucketWebhookEndpoint(Endpoint):
         if not handler:
             return HttpResponse(status=204)
 
-        address_string = str(request.META["REMOTE_ADDR"])
-        ip = ipaddress.ip_address(address_string)
+        address_string = get_trusted_remote_addr(request)
+        try:
+            ip = ipaddress.ip_address(address_string or "")
+        except ValueError:
+            logger.error(
+                "%s.webhook.invalid-ip",
+                PROVIDER_NAME,
+                extra={"organization_id": organization.id},
+            )
+            return HttpResponse(status=401)
+
         valid_ip = False
         for ip_range in BITBUCKET_IP_RANGES:
             if ip in ip_range:
@@ -243,18 +259,25 @@ class BitbucketWebhookEndpoint(Endpoint):
             raise Http404()
 
         integration = integration_service.get_integration(integration_id=repo.integration_id)
-        if integration and "webhook_secret" in integration.metadata:
-            secret = integration.metadata["webhook_secret"]
-            try:
-                method, signature = request.META["HTTP_X_HUB_SIGNATURE"].split("=", 1)
-            except (IndexError, KeyError, ValueError):
-                raise WebhookMissingSignatureException()
+        secret = integration.metadata.get("webhook_secret") if integration else None
+        if not secret:
+            logger.error(
+                "%s.webhook.missing-secret",
+                PROVIDER_NAME,
+                extra={"organization_id": organization.id, "repository_id": repo.id},
+            )
+            raise WebhookMissingSecretException()
 
-            if method != "sha256":
-                raise WebhookUnsupportedSignatureMethodException()
+        try:
+            method, signature = request.META["HTTP_X_HUB_SIGNATURE"].split("=", 1)
+        except (IndexError, KeyError, ValueError):
+            raise WebhookMissingSignatureException()
 
-            if not is_valid_signature(request.body, secret, signature):
-                raise WebhookInvalidSignatureException()
+        if method != "sha256":
+            raise WebhookUnsupportedSignatureMethodException()
+
+        if not is_valid_signature(body, secret, signature):
+            raise WebhookInvalidSignatureException()
 
         event_handler = handler()
 
