@@ -366,3 +366,43 @@ class StatusActionTest(APITestCase):
             self.integration.delete()
         resp = self.post_webhook()
         assert resp.status_code == 404
+
+    @responses.activate
+    @patch("sentry.integrations.msteams.webhook.verify_signature", return_value=True)
+    def test_group_from_other_organization(self, verify: MagicMock) -> None:
+        other_org = self.create_organization(owner=self.create_user())
+        other_project = self.create_project(organization=other_org)
+        other_event = self.store_event(
+            data={"message": "not yours"},
+            project_id=other_project.id,
+        )
+        assert other_event.group is not None
+
+        resp = self.post_webhook(
+            action_type=ACTION_TYPE.RESOLVE,
+            resolve_input="resolved",
+            group_id=str(other_event.group.id),
+        )
+
+        assert resp.status_code == 404
+        assert Group.objects.get(id=other_event.group.id).get_status() == GroupStatus.UNRESOLVED
+
+    @responses.activate
+    @patch("sentry.integrations.msteams.webhook.verify_signature", return_value=True)
+    def test_identity_not_a_member_of_organization(self, verify: MagicMock) -> None:
+        non_member = self.create_user()
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            Identity.objects.create(
+                external_id="w0rmt0ngu3",
+                idp=self.idp,
+                user=non_member,
+                status=IdentityStatus.VALID,
+                scopes=[],
+            )
+
+        resp = self.post_webhook(
+            action_type=ACTION_TYPE.RESOLVE, resolve_input="resolved", user_id="w0rmt0ngu3"
+        )
+
+        assert resp.status_code == 403
+        assert Group.objects.get(id=self.group1.id).get_status() == GroupStatus.UNRESOLVED

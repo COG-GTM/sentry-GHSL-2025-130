@@ -49,6 +49,7 @@ from sentry.models.activity import ActivityIntegration
 from sentry.models.apikey import ApiKey
 from sentry.models.group import Group
 from sentry.models.rule import Rule
+from sentry.organizations.services.organization import organization_service
 from sentry.services import eventstore
 from sentry.silo.base import SiloMode
 from sentry.users.services.user.service import user_service
@@ -571,7 +572,11 @@ class MsTeamsWebhookEndpoint(Endpoint):
             integration = integration_service.get_integration(
                 integration_id=integration.id, status=ObjectStatus.ACTIVE
             )
-            if integration is None:
+            # The card payload is fully controlled by whoever submits the action, so the group
+            # must belong to an organization the resolved integration is actually installed on.
+            if integration is None or not integration_service.get_organization_integration(
+                organization_id=group.project.organization_id, integration_id=integration.id
+            ):
                 group = None
 
         if integration is None or group is None:
@@ -611,11 +616,24 @@ class MsTeamsWebhookEndpoint(Endpoint):
             client.send_card(user_conversation_id, card)
             return self.respond(status=201)
 
+        if identity.user_id is None or not organization_service.check_membership_by_id(
+            organization_id=group.project.organization_id, user_id=identity.user_id
+        ):
+            logger.info(
+                "msteams.action.not-a-member",
+                extra={
+                    "team_id": team_id,
+                    "integration_id": integration.id,
+                    "organization_id": group.project.organization_id,
+                },
+            )
+            return self.respond(status=403)
+
         # update the state of the issue
         issue_change_response = self._issue_state_change(group, identity, data["value"])
 
         # get the rules from the payload
-        rules = tuple(Rule.objects.filter(id__in=payload["rules"]))
+        rules = tuple(Rule.objects.filter(id__in=payload["rules"], project_id=group.project_id))
 
         # pull the event based off our payload
         event = eventstore.backend.get_event_by_id(group.project_id, payload["eventId"])
