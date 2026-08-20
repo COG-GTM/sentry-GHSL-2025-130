@@ -227,6 +227,30 @@ class OrganizationMissingMembersTestCase(APITestCase):
             {"email": "a@exampletwo.com", "externalId": "not", "commitCount": 1},
         ]
 
+    def test_owners_email_domain_with_quote_no_injection(self) -> None:
+        OrganizationMember.objects.filter(role="owner", organization=self.organization).update(
+            user_email="attacker@x'/**/OR/**/1=1/**/AND/**/UPPER('a"
+        )
+
+        response = self.get_success_response(self.organization.slug)
+        assert response.data[0]["users"] == [
+            {"email": "c@example.com", "externalId": "c", "commitCount": 2},
+            {"email": "d@example.com", "externalId": "d", "commitCount": 1},
+            {"email": "a@exampletwo.com", "externalId": "not", "commitCount": 1},
+        ]
+
+    def test_owners_email_domain_with_wildcard_no_filter(self) -> None:
+        OrganizationMember.objects.filter(role="owner", organization=self.organization).update(
+            user_email="attacker@%.com"
+        )
+
+        response = self.get_success_response(self.organization.slug)
+        assert response.data[0]["users"] == [
+            {"email": "c@example.com", "externalId": "c", "commitCount": 2},
+            {"email": "d@example.com", "externalId": "d", "commitCount": 1},
+            {"email": "a@exampletwo.com", "externalId": "not", "commitCount": 1},
+        ]
+
     def test_excludes_empty_owner_emails(self) -> None:
         # ignores this second owner with an empty email
 
