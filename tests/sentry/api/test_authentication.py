@@ -18,6 +18,7 @@ from sentry.api.authentication import (
     ServiceRpcSignatureAuthentication,
     UserAuthTokenAuthentication,
     compare_service_signature,
+    is_internal_relay,
 )
 from sentry.auth.services.auth import AuthenticatedToken
 from sentry.auth.system import SystemToken, is_system_auth
@@ -455,6 +456,57 @@ def test_registered_relay(internal) -> None:
     assert relay.public_key == str(pk)
     # data should be deserialized in request.relay_request_data
     assert request.relay_request_data == data
+
+
+@django_db_all
+@pytest.mark.parametrize("remote_addr", ["127.0.0.1", "10.0.0.1"])
+def test_registered_relay_is_not_internal_for_internal_ips(remote_addr) -> None:
+    """
+    REMOTE_ADDR is derived from the client controlled X-Forwarded-For header and
+    must therefore never grant a relay access to all project configs.
+    """
+    sk, pk = generate_key_pair()
+    relay_id = str(uuid.uuid4())
+
+    data = {"some_data": "hello"}
+    packed, signature = sk.pack(data)
+    request = drf_request_from_request(
+        RequestFactory().post("/", data=packed, content_type="application/json")
+    )
+    request.META["HTTP_X_SENTRY_RELAY_SIGNATURE"] = signature
+    request.META["HTTP_X_SENTRY_RELAY_ID"] = relay_id
+    request.META["REMOTE_ADDR"] = remote_addr
+
+    Relay.objects.create(relay_id=relay_id, public_key=str(pk), is_internal=True)
+
+    authenticator = RelayAuthentication()
+    with override_settings(SENTRY_RELAY_WHITELIST_PK=[], DEBUG=False):
+        authenticator.authenticate(request)
+
+    assert request.relay.is_internal is False
+
+
+@django_db_all
+def test_statically_configured_internal_relay_with_other_public_key(settings) -> None:
+    sk, pk = generate_key_pair()
+    _, other_pk = generate_key_pair()
+    relay_id = str(uuid.uuid4())
+
+    data = {"some_data": "hello"}
+    packed, signature = sk.pack(data)
+    request = drf_request_from_request(
+        RequestFactory().post("/", data=packed, content_type="application/json")
+    )
+    request.META["HTTP_X_SENTRY_RELAY_SIGNATURE"] = signature
+    request.META["HTTP_X_SENTRY_RELAY_ID"] = relay_id
+    request.META["REMOTE_ADDR"] = "127.0.0.1"
+
+    settings.SENTRY_OPTIONS["relay.static_auth"] = {
+        relay_id: {"internal": True, "public_key": str(other_pk)}
+    }
+
+    assert is_internal_relay(request, str(pk)) is False
+    assert is_internal_relay(request, str(other_pk)) is True
 
 
 @django_db_all
