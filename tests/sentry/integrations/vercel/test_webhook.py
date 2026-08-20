@@ -11,6 +11,7 @@ from fixtures.vercel import (
     MINIMAL_WEBHOOK,
     SECRET,
     SIGNATURE,
+    UNINSTALL_WEBHOOK,
 )
 from sentry import VERSION
 from sentry.sentry_apps.models.sentry_app_installation_token import SentryAppInstallationToken
@@ -39,6 +40,39 @@ class SignatureVercelTest(APITestCase):
             )
 
             assert response.status_code == 401
+
+    def _delete(self, body: str, signature: str | None = None) -> Response:
+        headers = {"HTTP_X_VERCEL_SIGNATURE": signature} if signature else {}
+        return self.client.delete(
+            path=self.webhook_url,
+            data=body,
+            content_type="application/json",
+            **headers,
+        )
+
+    def test_delete_missing_signature(self) -> None:
+        with override_options({"vercel.client-secret": SECRET}):
+            response = self._delete(UNINSTALL_WEBHOOK)
+
+            assert response.status_code == 401
+
+    def test_delete_invalid_signature(self) -> None:
+        with override_options({"vercel.client-secret": SECRET}):
+            response = self._delete(UNINSTALL_WEBHOOK, "xxxinvalidsignaturexxx")
+
+            assert response.status_code == 401
+
+    def test_delete_valid_signature(self) -> None:
+        signature = hmac.new(
+            key=SECRET.encode("utf-8"),
+            msg=UNINSTALL_WEBHOOK.encode("utf-8"),
+            digestmod=hashlib.sha1,
+        ).hexdigest()
+
+        with override_options({"vercel.client-secret": SECRET}):
+            response = self._delete(UNINSTALL_WEBHOOK, signature)
+
+            assert response.status_code == 404
 
 
 @control_silo_test

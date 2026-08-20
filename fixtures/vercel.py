@@ -78,6 +78,20 @@ DEPLOYMENT_WEBHOOK_NO_COMMITS = """
     }
 """
 
+UNINSTALL_WEBHOOK = """
+    {
+        "type": "integration-configuration.removed",
+        "payload": {
+            "configuration": {
+                "id": "my_config_id"
+            },
+            "user": {
+                "id": "cstd1xKmLGVMed0z0f3SHlD2"
+            }
+        }
+    }
+"""
+
 MINIMAL_WEBHOOK = """
     {
         "type": "deployment.created",
