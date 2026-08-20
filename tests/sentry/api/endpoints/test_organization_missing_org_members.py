@@ -103,6 +103,14 @@ class OrganizationMissingMembersTestCase(APITestCase):
             {"email": "d@example.com", "externalId": "d", "commitCount": 1},
         ]
 
+    def test_shared_domain_with_sql_metacharacters(self) -> None:
+        owner = OrganizationMember.objects.get(organization=self.organization, user_id=self.user.id)
+        owner.user_email = "owner@example.com'/**/OR/**/1=1--"
+        owner.save()
+
+        response = self.get_success_response(self.organization.slug)
+        assert response.data[0]["users"] == []
+
     def test_requires_org_write(self) -> None:
         user = self.create_user()
         self.create_member(organization=self.organization, user=user, role="member")
