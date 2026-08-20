@@ -50,11 +50,12 @@ class OrganizationMemberReinviteEndpoint(OrganizationEndpoint):
     ) -> tuple[tuple[Any, ...], dict[str, Any]]:
         args, kwargs = super().convert_args(request, organization_id_or_slug, *args, **kwargs)
 
+        organization = kwargs["organization"]
         try:
             kwargs["invited_member"] = OrganizationMemberInvite.objects.get(
-                id=int(member_invite_id)
+                id=int(member_invite_id), organization=organization
             )
-        except OrganizationMemberInvite.DoesNotExist:
+        except (OrganizationMemberInvite.DoesNotExist, ValueError):
             raise ResourceDoesNotExist
         return args, kwargs
 
