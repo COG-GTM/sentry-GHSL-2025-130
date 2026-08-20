@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import logging
 from abc import ABC
 from collections.abc import Mapping
@@ -15,7 +17,7 @@ from django.views.decorators.csrf import csrf_exempt
 from sentry.api.api_owners import ApiOwner
 from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import Endpoint
-from sentry.api.exceptions import BadRequest
+from sentry.api.exceptions import BadRequest, SentryAPIException
 from sentry.integrations.base import IntegrationDomain
 from sentry.integrations.models.integration import Integration
 from sentry.integrations.source_code_management.webhook import SCMWebhook
@@ -34,6 +36,45 @@ logger = logging.getLogger("sentry.webhooks")
 PROVIDER_NAME = "integrations:bitbucket_server"
 
 
+def get_repository_payload(event: Mapping[str, Any]) -> Mapping[str, Any]:
+    repository = event.get("repository")
+    return repository if isinstance(repository, dict) else {}
+
+
+def is_valid_signature(body: bytes, secret: str, signature: str) -> bool:
+    expected_signature = hmac.new(
+        secret.encode("utf-8"),
+        msg=body,
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+
+    return hmac.compare_digest(expected_signature, signature)
+
+
+class WebhookMissingSecretException(SentryAPIException):
+    status_code = 401
+    code = f"{PROVIDER_NAME}.webhook.missing-secret"
+    message = "No webhook secret is configured for this repository"
+
+
+class WebhookMissingSignatureException(SentryAPIException):
+    status_code = 400
+    code = f"{PROVIDER_NAME}.webhook.missing-signature"
+    message = "Missing webhook signature"
+
+
+class WebhookUnsupportedSignatureMethodException(SentryAPIException):
+    status_code = 400
+    code = f"{PROVIDER_NAME}.webhook.unsupported-signature-method"
+    message = "Signature method is not supported"
+
+
+class WebhookInvalidSignatureException(SentryAPIException):
+    status_code = 400
+    code = f"{PROVIDER_NAME}.webhook.invalid-signature"
+    message = "Webhook signature is invalid"
+
+
 class BitbucketServerWebhook(SCMWebhook, ABC):
     @property
     def provider(self):
@@ -44,9 +85,39 @@ class BitbucketServerWebhook(SCMWebhook, ABC):
         Given a webhook payload, update stored repo data if needed.
         """
 
-        name_from_event = event["repository"]["project"]["key"] + "/" + event["repository"]["slug"]
-        if repo.name != name_from_event or repo.config.get("name") != name_from_event:
-            repo.update(name=name_from_event, config=dict(repo.config, name=name_from_event))
+        repository = get_repository_payload(event)
+        project = repository.get("project")
+        project_key = project.get("key") if isinstance(project, dict) else None
+        slug = repository.get("slug")
+
+        # A project key or slug containing a separator would make the stored name
+        # ambiguous, since the name is split on "/" to address the repository.
+        if (
+            not isinstance(project_key, str)
+            or not isinstance(slug, str)
+            or not project_key
+            or not slug
+            or "/" in project_key
+            or "/" in slug
+        ):
+            logger.warning(
+                "%s.webhook.invalid-repository-name",
+                PROVIDER_NAME,
+                extra={"repository_id": repo.id, "organization_id": repo.organization_id},
+            )
+            return
+
+        name_from_event = f"{project_key}/{slug}"
+        if (
+            repo.name != name_from_event
+            or repo.config.get("name") != name_from_event
+            or repo.config.get("project") != project_key
+            or repo.config.get("repo") != slug
+        ):
+            repo.update(
+                name=name_from_event,
+                config=dict(repo.config, name=name_from_event, project=project_key, repo=slug),
+            )
 
 
 class PushEventWebhook(BitbucketServerWebhook):
@@ -60,24 +131,15 @@ class PushEventWebhook(BitbucketServerWebhook):
         if not (
             (organization := kwargs.get("organization"))
             and (integration_id := kwargs.get("integration_id"))
+            and (repo := kwargs.get("repo"))
         ):
-            raise ValueError("Organization and integration_id must be provided")
+            raise ValueError("Organization, integration_id and repo must be provided")
 
         with IntegrationWebhookEvent(
             interaction_type=self.event_type,
             domain=IntegrationDomain.SOURCE_CODE_MANAGEMENT,
             provider_key=self.provider,
         ).capture() as lifecycle:
-            try:
-                repo = Repository.objects.get(
-                    organization_id=organization.id,
-                    provider=PROVIDER_NAME,
-                    external_id=str(event["repository"]["id"]),
-                )
-            except Repository.DoesNotExist as e:
-                lifecycle.record_halt(halt_reason=e)
-                raise Http404()
-
             provider = repo.get_provider()
             try:
                 installation = provider.get_installation(integration_id, organization.id)
@@ -94,7 +156,14 @@ class PushEventWebhook(BitbucketServerWebhook):
             # while we're here, make sure repo data is up to date
             self.update_repo_data(repo, event)
 
-            [project_name, repo_name] = repo.name.split("/")
+            project_name = repo.config.get("project")
+            repo_name = repo.config.get("repo")
+            if not project_name or not repo_name:
+                name_parts = repo.name.split("/")
+                if len(name_parts) != 2:
+                    lifecycle.record_halt(halt_reason="invalid-repository-name")
+                    raise BadRequest(detail="Invalid repository name")
+                project_name, repo_name = name_parts
 
             for change in event["changes"]:
                 from_hash = None if change.get("fromHash") == "0" * 40 else change.get("fromHash")
@@ -208,8 +277,59 @@ class BitbucketServerWebhookEndpoint(Endpoint):
             )
             return HttpResponse(status=400)
 
+        external_id = get_repository_payload(event).get("id")
+        if external_id is None:
+            logger.error(
+                "%s.webhook.missing-repository",
+                PROVIDER_NAME,
+                extra={"organization_id": organization.id, "integration_id": integration_id},
+            )
+            return HttpResponse(status=400)
+
+        try:
+            repo = Repository.objects.get(
+                organization_id=organization.id,
+                provider=PROVIDER_NAME,
+                external_id=str(external_id),
+            )
+        except Repository.DoesNotExist:
+            raise Http404()
+
+        self.verify_signature(request, repo, body)
+
         event_handler = handler()
 
-        event_handler(event, organization=organization, integration_id=integration_id)
+        event_handler(event, organization=organization, integration_id=integration_id, repo=repo)
 
         return HttpResponse(status=204)
+
+    def verify_signature(self, request: HttpRequest, repo: Repository, body: bytes) -> None:
+        """
+        Bitbucket Server signs the raw request body with the secret we set on the
+        repository webhook when the repository was added to Sentry.
+        """
+
+        secret = repo.config.get("webhook_secret")
+        if not secret:
+            logger.error(
+                "%s.webhook.missing-secret",
+                PROVIDER_NAME,
+                extra={"organization_id": repo.organization_id, "repository_id": repo.id},
+            )
+            raise WebhookMissingSecretException()
+
+        try:
+            method, signature = request.META["HTTP_X_HUB_SIGNATURE"].split("=", 1)
+        except (KeyError, ValueError):
+            raise WebhookMissingSignatureException()
+
+        if method != "sha256":
+            raise WebhookUnsupportedSignatureMethodException()
+
+        if not is_valid_signature(body, secret, signature):
+            logger.error(
+                "%s.webhook.invalid-signature",
+                PROVIDER_NAME,
+                extra={"organization_id": repo.organization_id, "repository_id": repo.id},
+            )
+            raise WebhookInvalidSignatureException()

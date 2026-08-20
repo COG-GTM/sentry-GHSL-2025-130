@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 from time import time
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -17,6 +19,12 @@ from sentry.users.models.identity import Identity
 from sentry_plugins.bitbucket.testutils import REFS_CHANGED_EXAMPLE
 
 PROVIDER = "bitbucket_server"
+WEBHOOK_SECRET = "a-very-secret-webhook-secret"
+
+
+def signature_headers(body: bytes, secret: str = WEBHOOK_SECRET) -> dict[str, str]:
+    signature = hmac.new(secret.encode("utf-8"), msg=body, digestmod=hashlib.sha256).hexdigest()
+    return {"HTTP_X_HUB_SIGNATURE": f"sha256={signature}"}
 
 
 class WebhookTestBase(APITestCase):
@@ -64,6 +72,7 @@ class WebhookTestBase(APITestCase):
                     external_id=self.external_id,
                     provider=PROVIDER_NAME,
                     name="maxbittker/newsdiffs",
+                    config={"webhook_secret": WEBHOOK_SECRET},
                 ),
                 **kwargs,
             }
@@ -74,7 +83,9 @@ class WebhookTestBase(APITestCase):
             self.organization.id,
             self.integration.id,
             raw_data=REFS_CHANGED_EXAMPLE,
-            extra_headers=dict(HTTP_X_EVENT_KEY="repo:refs_changed"),
+            extra_headers=dict(
+                HTTP_X_EVENT_KEY="repo:refs_changed", **signature_headers(REFS_CHANGED_EXAMPLE)
+            ),
             status_code=204,
         )
 
@@ -105,6 +116,83 @@ class WebhookPostTest(WebhookTestBase):
             status_code=204,
         )
 
+    def test_missing_signature(self) -> None:
+        self.create_repository()
+
+        self.get_error_response(
+            self.organization.id,
+            self.integration.id,
+            raw_data=REFS_CHANGED_EXAMPLE,
+            extra_headers=dict(HTTP_X_EVENT_KEY="repo:refs_changed"),
+            status_code=400,
+        )
+
+    def test_invalid_signature(self) -> None:
+        self.create_repository()
+
+        self.get_error_response(
+            self.organization.id,
+            self.integration.id,
+            raw_data=REFS_CHANGED_EXAMPLE,
+            extra_headers=dict(
+                HTTP_X_EVENT_KEY="repo:refs_changed",
+                **signature_headers(REFS_CHANGED_EXAMPLE, secret="not-the-secret"),
+            ),
+            status_code=400,
+        )
+
+    def test_unsupported_signature_method(self) -> None:
+        self.create_repository()
+
+        self.get_error_response(
+            self.organization.id,
+            self.integration.id,
+            raw_data=REFS_CHANGED_EXAMPLE,
+            extra_headers=dict(
+                HTTP_X_EVENT_KEY="repo:refs_changed",
+                HTTP_X_HUB_SIGNATURE="sha1=0000000000000000000000000000000000000000",
+            ),
+            status_code=400,
+        )
+
+    def test_signature_over_tampered_body_is_rejected(self) -> None:
+        self.create_repository()
+        tampered_body = REFS_CHANGED_EXAMPLE.replace(b"my-project", b"other-project")
+
+        self.get_error_response(
+            self.organization.id,
+            self.integration.id,
+            raw_data=tampered_body,
+            extra_headers=dict(
+                HTTP_X_EVENT_KEY="repo:refs_changed", **signature_headers(REFS_CHANGED_EXAMPLE)
+            ),
+            status_code=400,
+        )
+
+    def test_repository_without_secret_is_rejected(self) -> None:
+        self.create_repository(config={})
+
+        self.get_error_response(
+            self.organization.id,
+            self.integration.id,
+            raw_data=REFS_CHANGED_EXAMPLE,
+            extra_headers=dict(
+                HTTP_X_EVENT_KEY="repo:refs_changed", **signature_headers(REFS_CHANGED_EXAMPLE)
+            ),
+            status_code=401,
+        )
+
+    def test_unknown_repository(self) -> None:
+        self.get_error_response(
+            self.organization.id,
+            self.integration.id,
+            raw_data=REFS_CHANGED_EXAMPLE,
+            extra_headers=dict(
+                HTTP_X_EVENT_KEY="repo:refs_changed", **signature_headers(REFS_CHANGED_EXAMPLE)
+            ),
+            status_code=404,
+        )
+
 
 class RefsChangedWebhookTest(WebhookTestBase):
     method = "post"
@@ -115,7 +203,9 @@ class RefsChangedWebhookTest(WebhookTestBase):
             self.organization.id,
             self.integration.id,
             raw_data=REFS_CHANGED_EXAMPLE,
-            extra_headers=dict(HTTP_X_EVENT_KEY="repo:refs_changed"),
+            extra_headers=dict(
+                HTTP_X_EVENT_KEY="repo:refs_changed", **signature_headers(REFS_CHANGED_EXAMPLE)
+            ),
             status_code=404,
         )
 
@@ -142,22 +232,58 @@ class RefsChangedWebhookTest(WebhookTestBase):
         error = Exception("error")
         mock_get_commits.side_effect = error
 
-        self.get_error_response(
-            self.organization.id,
-            self.integration.id,
-            raw_data={
+        body = orjson.dumps(
+            {
                 "changes": [{"fromHash": "hash1", "toHash": "hash2"}],
                 "repository": {
                     "id": "{b128e0f6-196a-4dde-b72d-f42abc6dc239}",
                     "project": {"key": "my-project"},
                     "slug": "breaking-changes",
                 },
-            },
-            extra_headers=dict(HTTP_X_EVENT_KEY="repo:refs_changed"),
+            }
+        )
+
+        self.get_error_response(
+            self.organization.id,
+            self.integration.id,
+            raw_data=body,
+            extra_headers=dict(HTTP_X_EVENT_KEY="repo:refs_changed", **signature_headers(body)),
             status_code=500,
         )
 
         assert_failure_metric(mock_record, error)
+
+    @patch("sentry.integrations.bitbucket_server.client.BitbucketServerClient.get_commits")
+    def test_repository_name_with_extra_separator_is_rejected(
+        self, mock_get_commits: MagicMock
+    ) -> None:
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            self.integration.add_organization(self.organization, default_auth_id=self.identity.id)
+
+        repo = self.create_repository(name="my-project/nested/repo")
+
+        body = orjson.dumps(
+            {
+                "changes": [{"fromHash": "hash1", "toHash": "hash2"}],
+                "repository": {
+                    "id": "{b128e0f6-196a-4dde-b72d-f42abc6dc239}",
+                    "project": {"key": "my-project"},
+                    "slug": "nested/repo",
+                },
+            }
+        )
+
+        self.get_error_response(
+            self.organization.id,
+            self.integration.id,
+            raw_data=body,
+            extra_headers=dict(HTTP_X_EVENT_KEY="repo:refs_changed", **signature_headers(body)),
+            status_code=400,
+        )
+
+        repo.refresh_from_db()
+        assert repo.name == "my-project/nested/repo"
+        assert mock_get_commits.call_count == 0
 
     @responses.activate
     def test_get_commits_error(self) -> None:
@@ -194,11 +320,12 @@ class RefsChangedWebhookTest(WebhookTestBase):
             },
         }
 
+        body = orjson.dumps(payload)
         self.get_error_response(
             self.organization.id,
             self.integration.id,
-            raw_data=orjson.dumps(payload),
-            extra_headers=dict(HTTP_X_EVENT_KEY="repo:refs_changed"),
+            raw_data=body,
+            extra_headers=dict(HTTP_X_EVENT_KEY="repo:refs_changed", **signature_headers(body)),
             status_code=400,
         )
 
@@ -236,10 +363,11 @@ class RefsChangedWebhookTest(WebhookTestBase):
             },
         }
 
+        body = orjson.dumps(payload)
         self.get_error_response(
             self.organization.id,
             self.integration.id,
-            raw_data=orjson.dumps(payload),
-            extra_headers=dict(HTTP_X_EVENT_KEY="repo:refs_changed"),
+            raw_data=body,
+            extra_headers=dict(HTTP_X_EVENT_KEY="repo:refs_changed", **signature_headers(body)),
             status_code=400,
         )

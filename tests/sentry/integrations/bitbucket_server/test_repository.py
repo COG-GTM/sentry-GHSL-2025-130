@@ -2,6 +2,7 @@ import datetime
 from datetime import timezone
 from functools import cached_property
 
+import orjson
 import pytest
 import responses
 
@@ -226,6 +227,12 @@ class BitbucketServerRepositoryProviderTest(APITestCase):
         data["identifier"] = full_repo_name
         repo_config_data = self.provider.build_repository_config(organization, data)
 
+        webhook_secret = repo_config_data["config"]["webhook_secret"]
+        assert webhook_secret
+        assert orjson.loads(responses.calls[-1].request.body)["configuration"] == {
+            "secret": webhook_secret
+        }
+
         assert repo_config_data == {
             "name": full_repo_name,
             "external_id": str(REPO["id"]),
@@ -236,6 +243,7 @@ class BitbucketServerRepositoryProviderTest(APITestCase):
                 "project": project,
                 "repo": repo,
                 "webhook_id": webhook_id,
+                "webhook_secret": webhook_secret,
             },
         }
 

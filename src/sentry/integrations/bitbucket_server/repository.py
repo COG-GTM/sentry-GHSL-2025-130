@@ -5,6 +5,7 @@ from django.core.cache import cache
 from django.urls import reverse
 
 from sentry.integrations.types import IntegrationProviderSlug
+from sentry.models.apitoken import generate_token
 from sentry.organizations.services.organization.model import RpcOrganization
 from sentry.plugins.providers.integration_repository import (
     IntegrationRepositoryProvider,
@@ -40,12 +41,15 @@ class BitbucketServerRepositoryProvider(IntegrationRepositoryProvider):
         installation = self.get_installation(data.get("installation"), organization.id)
         client = installation.get_client()
 
+        webhook_secret = generate_token()
+
         try:
             resp = client.create_hook(
                 data["project"],
                 data["repo"],
                 {
                     "name": "sentry-bitbucket-server-repo-hook",
+                    "configuration": {"secret": webhook_secret},
                     "url": absolute_uri(
                         reverse(
                             "sentry-extensions-bitbucketserver-webhook",
@@ -74,6 +78,7 @@ class BitbucketServerRepositoryProvider(IntegrationRepositoryProvider):
                     "project": data["project"],
                     "repo": data["repo"],
                     "webhook_id": resp["id"],
+                    "webhook_secret": webhook_secret,
                 },
                 "integration_id": data["installation"],
             }
