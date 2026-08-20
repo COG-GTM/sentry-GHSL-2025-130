@@ -15,8 +15,15 @@ class GroupEventJsonView(OrganizationView):
         try:
             # TODO(tkaemming): This should *actually* redirect, see similar
             # comment in ``GroupEndpoint.convert_args``.
-            group, _ = get_group_with_redirect(group_id)
+            group, _ = get_group_with_redirect(
+                group_id,
+                queryset=Group.objects.select_related("project", "project__organization"),
+                organization=organization,
+            )
         except Group.DoesNotExist:
+            raise Http404
+
+        if not request.access.has_project_scope(group.project, "event:read"):
             raise Http404
 
         if event_id_or_latest == "latest":
