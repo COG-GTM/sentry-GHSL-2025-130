@@ -1,11 +1,21 @@
+from __future__ import annotations
+
 import unittest
 from unittest import mock
 
 from django.http import HttpRequest
+from django.test import override_settings
 
 from sentry import options
+from sentry.middleware.proxy import SetRemoteAddrFromForwardedFor
 from sentry.testutils.cases import TestCase
-from sentry.utils.http import absolute_uri, get_origins, is_valid_origin, origin_from_request
+from sentry.utils.http import (
+    absolute_uri,
+    get_origins,
+    get_trusted_remote_addr,
+    is_valid_origin,
+    origin_from_request,
+)
 
 
 class AbsoluteUriTest(unittest.TestCase):
@@ -240,3 +250,37 @@ class OriginFromRequestTestCase(TestCase):
 
         request.META["HTTP_REFERER"] = "http://example.com"
         assert origin_from_request(request) == "http://example.com"
+
+
+class GetTrustedRemoteAddrTestCase(TestCase):
+    def make_request(self, forwarded_for: str | None, peer_addr: str) -> HttpRequest:
+        request = HttpRequest()
+        request.META["REMOTE_ADDR"] = peer_addr
+        if forwarded_for is not None:
+            request.META["HTTP_X_FORWARDED_FOR"] = forwarded_for
+        SetRemoteAddrFromForwardedFor().process_request(request)
+        return request
+
+    def test_ignores_forwarded_for_without_trusted_proxies(self) -> None:
+        request = self.make_request("8.8.8.8", peer_addr="1.2.3.4")
+        assert request.META["REMOTE_ADDR"] == "8.8.8.8"
+        assert get_trusted_remote_addr(request) == "1.2.3.4"
+
+    def test_no_forwarded_for(self) -> None:
+        request = self.make_request(None, peer_addr="1.2.3.4")
+        assert get_trusted_remote_addr(request) == "1.2.3.4"
+
+    @override_settings(SENTRY_TRUSTED_PROXY_COUNT=1)
+    def test_single_trusted_proxy(self) -> None:
+        request = self.make_request("8.8.8.8, 1.2.3.4:1234", peer_addr="10.0.0.1")
+        assert get_trusted_remote_addr(request) == "1.2.3.4"
+
+    @override_settings(SENTRY_TRUSTED_PROXY_COUNT=2)
+    def test_multiple_trusted_proxies(self) -> None:
+        request = self.make_request("8.8.8.8, 1.2.3.4, 10.0.0.2", peer_addr="10.0.0.1")
+        assert get_trusted_remote_addr(request) == "1.2.3.4"
+
+    @override_settings(SENTRY_TRUSTED_PROXY_COUNT=2)
+    def test_chain_shorter_than_proxy_count(self) -> None:
+        request = self.make_request("8.8.8.8", peer_addr="10.0.0.1")
+        assert get_trusted_remote_addr(request) == "10.0.0.1"

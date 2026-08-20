@@ -2136,6 +2136,12 @@ SELF_HOSTED_STABLE_VERSION = "25.12.0"
 # when checking REMOTE_ADDR ip addresses
 SENTRY_USE_X_FORWARDED_FOR = True
 
+# Number of proxies we run in front of the application that append to X-Forwarded-For.
+# Only the entries appended by those proxies can be trusted, so security decisions based on
+# the remote address (see `sentry.utils.http.get_trusted_remote_addr`) ignore anything a
+# client may have sent in the header itself. 0 means the application is reached directly.
+SENTRY_TRUSTED_PROXY_COUNT = 0
+
 SENTRY_DEFAULT_INTEGRATIONS = (
     "sentry.integrations.bitbucket.integration.BitbucketIntegrationProvider",
     "sentry.integrations.bitbucket_server.integration.BitbucketServerIntegrationProvider",
