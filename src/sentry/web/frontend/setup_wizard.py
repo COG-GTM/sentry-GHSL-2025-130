@@ -82,9 +82,6 @@ class SetupWizardView(BaseView):
         }
         cache_key = f"{SETUP_WIZARD_CACHE_KEY}{wizard_hash}"
 
-        org_slug = request.GET.get("org_slug")
-        project_slug = request.GET.get("project_slug")
-
         wizard_data = default_cache.get(cache_key)
         if wizard_data is None:
             return self.redirect_to_org(request)
@@ -109,24 +106,10 @@ class SetupWizardView(BaseView):
         context["organizations"] = list(org_mappings_map.values())
         context["enableProjectSelection"] = True
 
-        # If org_slug and project_slug are provided, we will use them to select the project
-        # If the project is not found or the slugs are not provided, we will show the project selection
-        if org_slug is not None and project_slug is not None:
-            target_org_mapping = next(
-                (mapping for mapping in org_mappings if mapping.slug == org_slug), None
-            )
-            if target_org_mapping is not None:
-                target_project = project_service.get_by_slug(
-                    slug=project_slug, organization_id=target_org_mapping.organization_id
-                )
-
-                if target_project is not None:
-                    cache_data = get_cache_data(
-                        mapping=target_org_mapping, project=target_project, user=request.user
-                    )
-                    default_cache.set(cache_key, cache_data, SETUP_WIZARD_CACHE_TIMEOUT)
-                    context["enableProjectSelection"] = False
-
+        # org_slug and project_slug only pre-select the project in the UI. Filling the cache
+        # mints an organization auth token, which must not happen from a GET request: GETs
+        # carry no CSRF token, so a link click would be enough to hand the token to whoever
+        # chose the hash. The user confirms the selection, which goes through post() below.
         return render_to_response("sentry/setup-wizard.html", context, request)
 
     @allow_cors_options
