@@ -27,7 +27,10 @@ def relay_id() -> str:
 
 
 @pytest.fixture
-def relay(relay_id: str | int, public_key: PublicKey):
+def relay(relay_id: str | int, public_key: PublicKey, settings):
     from sentry.models.relay import Relay
+
+    # internal relays are only trusted when their public key is configured
+    settings.SENTRY_RELAY_WHITELIST_PK = [*settings.SENTRY_RELAY_WHITELIST_PK, str(public_key)]
 
     return Relay.objects.create(relay_id=relay_id, public_key=str(public_key), is_internal=True)

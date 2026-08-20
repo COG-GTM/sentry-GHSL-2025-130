@@ -1,17 +1,12 @@
-from unittest import mock
 from uuid import uuid4
 
 import orjson
+from django.test import override_settings
 from django.urls import reverse
 from sentry_relay.auth import generate_key_pair
 
-from sentry.auth import system
 from sentry.models.relay import Relay
 from sentry.testutils.cases import APITestCase
-
-
-def disable_internal_networks():
-    return mock.patch.object(system, "INTERNAL_NETWORKS", ())
 
 
 class RelayPublicKeysConfigTest(APITestCase):
@@ -51,7 +46,8 @@ class RelayPublicKeysConfigTest(APITestCase):
         self.path = reverse("sentry-api-0-relay-publickeys")
 
     def test_get_project_config_internal(self) -> None:
-        result = self._call_endpoint(self.internal_relay)
+        with override_settings(SENTRY_RELAY_WHITELIST_PK=[str(self.public_key)]):
+            result = self._call_endpoint(self.internal_relay)
         legacy_keys = result["public_keys"]
         keys = result["relays"]
 
@@ -73,7 +69,7 @@ class RelayPublicKeysConfigTest(APITestCase):
 
     def test_get_project_config_external(self) -> None:
 
-        with disable_internal_networks():
+        with override_settings(SENTRY_RELAY_WHITELIST_PK=[]):
             result = self._call_endpoint(self.external_relay)
 
         legacy_keys = result["public_keys"]

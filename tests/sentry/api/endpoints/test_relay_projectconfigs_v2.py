@@ -56,12 +56,12 @@ def add_org_key(default_organization, relay):
 
 
 @pytest.fixture
-def no_internal_networks():
+def external_relay(relay, settings):
     """
-    Disable is_internal_ip functionality (make all requests appear to be from external networks)
+    Make the relay external (not configured as an internal relay)
     """
-    with patch("sentry.auth.system.INTERNAL_NETWORKS", ()):
-        yield
+    settings.SENTRY_RELAY_WHITELIST_PK = []
+    return relay
 
 
 @django_db_all
@@ -157,7 +157,7 @@ def test_relays_dyamic_sampling(call_endpoint, default_projectkey) -> None:
 
 @django_db_all
 def test_trusted_external_relays_should_not_be_able_to_request_full_configs(
-    add_org_key, call_endpoint, no_internal_networks
+    add_org_key, call_endpoint, external_relay
 ):
     result, status_code = call_endpoint()
     assert status_code == 403
@@ -176,7 +176,7 @@ def test_external_relays_do_not_get_project_configuration(
 
 @django_db_all
 def test_untrusted_external_relays_should_not_receive_configs(
-    call_endpoint, no_internal_networks
+    call_endpoint, external_relay
 ) -> None:
     result, status_code = call_endpoint()
 

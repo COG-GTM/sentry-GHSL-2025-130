@@ -555,6 +555,44 @@ class RelayRegisterTest(APITestCase):
         assert rv2.first_seen < after_second_relay
         assert rv2.last_seen < after_second_relay
 
+    def test_spoofed_forwarded_for_does_not_register_internal_relay(self) -> None:
+        """
+        A relay must not become internal just because the request appears to
+        come from an internal IP: X-Forwarded-For is client controlled.
+        """
+        private_key, public_key = generate_key_pair()
+        relay_id = str(uuid4())
+
+        data = {"public_key": str(public_key), "relay_id": relay_id}
+        raw_json, signature = private_key.pack(data)
+
+        resp = self.client.post(
+            self.path,
+            data=raw_json,
+            content_type="application/json",
+            HTTP_X_SENTRY_RELAY_ID=relay_id,
+            HTTP_X_SENTRY_RELAY_SIGNATURE=signature,
+            HTTP_X_FORWARDED_FOR="127.0.0.1",
+        )
+
+        assert resp.status_code == 200, resp.content
+        result = orjson.loads(resp.content)
+
+        data = {"token": str(result.get("token")), "relay_id": relay_id}
+        raw_json, signature = private_key.pack(data)
+
+        resp = self.client.post(
+            reverse("sentry-api-0-relay-register-response"),
+            data=raw_json,
+            content_type="application/json",
+            HTTP_X_SENTRY_RELAY_ID=relay_id,
+            HTTP_X_SENTRY_RELAY_SIGNATURE=signature,
+            HTTP_X_FORWARDED_FOR="127.0.0.1",
+        )
+
+        assert resp.status_code == 200, resp.content
+        assert Relay.objects.get(relay_id=relay_id).is_internal is False
+
     def test_no_db_for_static_relays(self) -> None:
         """
         Tests that statically authenticated relays do not access

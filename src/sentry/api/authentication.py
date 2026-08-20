@@ -26,7 +26,7 @@ from sentry_relay.exceptions import UnpackError
 
 from sentry import options
 from sentry.auth.services.auth import AuthenticatedToken
-from sentry.auth.system import SystemToken, is_internal_ip
+from sentry.auth.system import SystemToken
 from sentry.hybridcloud.models import ApiKeyReplica, ApiTokenReplica, OrgAuthTokenReplica
 from sentry.hybridcloud.rpc.service import RpcAuthenticationSetupException, compare_signature
 from sentry.models.apiapplication import ApiApplication
@@ -95,6 +95,14 @@ class AuthenticationSiloLimit(SiloLimit):
 def is_internal_relay(request, public_key):
     """
     Checks if the relay is trusted (authorized for all project configs)
+
+    Trust is granted exclusively based on explicit configuration (a whitelisted
+    public key or a statically configured internal relay). The network origin of
+    the request is deliberately not taken into account: `REMOTE_ADDR` is derived
+    from the client controlled `X-Forwarded-For` header whenever
+    `SENTRY_USE_X_FORWARDED_FOR` is enabled, so anybody able to reach the
+    (unauthenticated) relay registration endpoints could otherwise claim to be
+    an internal relay.
     """
 
     # check legacy whitelisted public_key settings
@@ -102,7 +110,11 @@ def is_internal_relay(request, public_key):
     if settings.DEBUG or public_key in settings.SENTRY_RELAY_WHITELIST_PK:
         return True
 
-    return is_internal_ip(request)
+    relay_info = options.get("relay.static_auth").get(get_header_relay_id(request))
+    if relay_info is not None and relay_info.get("internal") is True:
+        return constant_time_compare(str(relay_info.get("public_key")), str(public_key))
+
+    return False
 
 
 def is_static_relay(request):
