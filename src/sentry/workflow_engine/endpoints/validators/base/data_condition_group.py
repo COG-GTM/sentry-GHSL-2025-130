@@ -23,14 +23,18 @@ class BaseDataConditionGroupValidator(CamelSnakeSerializer):
 
         return conditions
 
-    def update_or_create_condition(self, condition_data: dict[str, Any]) -> DataCondition:
+    def update_or_create_condition(
+        self, condition_data: dict[str, Any], condition_group: DataConditionGroup
+    ) -> DataCondition:
         validator = BaseDataConditionValidator()
         condition_id = condition_data.get("id")
 
         if condition_id:
             try:
-                condition = DataCondition.objects.get(id=condition_id)
-            except DataConditionGroup.DoesNotExist:
+                condition = DataCondition.objects.get(
+                    id=condition_id, condition_group_id=condition_group.id
+                )
+            except DataCondition.DoesNotExist:
                 raise serializers.ValidationError(f"Condition with id {condition_id} not found.")
 
             condition = validator.update(condition, condition_data)
@@ -49,10 +53,11 @@ class BaseDataConditionGroupValidator(CamelSnakeSerializer):
         conditions = validated_data.pop("conditions", None)
         if conditions:
             for condition_data in conditions:
-                if not condition_data.get("condition_group_id"):
-                    condition_data["condition_group_id"] = instance.id
+                # A client supplied condition_group_id would allow conditions to be re-parented
+                # into a group the requester does not own, so it is always ignored here.
+                condition_data["condition_group_id"] = instance.id
 
-                self.update_or_create_condition(condition_data)
+                self.update_or_create_condition(condition_data, instance)
 
         # update the condition group
         instance.update(**validated_data)
@@ -66,8 +71,7 @@ class BaseDataConditionGroupValidator(CamelSnakeSerializer):
             )
 
             for condition in validated_data["conditions"]:
-                if not condition.get("condition_group_id"):
-                    condition["condition_group_id"] = condition_group.id
+                condition["condition_group_id"] = condition_group.id
                 condition_validator = BaseDataConditionValidator()
                 condition_validator.create(condition)
 
