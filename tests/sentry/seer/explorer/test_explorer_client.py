@@ -625,6 +625,7 @@ class TestSeerExplorerClientPushChanges(TestCase):
 
         body = orjson.loads(mock_post.call_args[1]["data"])
         assert body["run_id"] == 123
+        assert body["organization_id"] == self.organization.id
         assert body["payload"]["type"] == "create_pr"
         assert body["payload"]["repo_name"] == "owner/repo"
         assert result.repo_pr_states["owner/repo"].pr_url == "https://github.com/owner/repo/pull/1"

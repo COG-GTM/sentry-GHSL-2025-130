@@ -447,6 +447,7 @@ class SeerExplorerClient:
         # Trigger PR creation
         path = "/v1/automation/explorer/update"
         payload = {
+            "organization_id": self.organization.id,
             "run_id": run_id,
             "payload": {
                 "type": "create_pr",

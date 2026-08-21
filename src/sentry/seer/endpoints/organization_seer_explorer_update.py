@@ -13,7 +13,7 @@ from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import region_silo_endpoint
 from sentry.api.bases.organization import OrganizationEndpoint, OrganizationPermission
 from sentry.models.organization import Organization
-from sentry.seer.explorer.client_utils import has_seer_explorer_access_with_detail
+from sentry.seer.explorer.client_utils import fetch_run_status, has_seer_explorer_access_with_detail
 from sentry.seer.signed_seer_api import sign_with_seer_secret
 
 logger = logging.getLogger(__name__)
@@ -44,13 +44,22 @@ class OrganizationSeerExplorerUpdateEndpoint(OrganizationEndpoint):
         if not request.data:
             return Response(status=400, data={"error": "Need a body with a payload"})
 
+        # The run id comes from the URL, so it must be checked against the organization the
+        # request is scoped to before we relay anything to Seer.
+        try:
+            fetch_run_status(int(run_id), organization)
+        except (ValueError, TypeError):
+            return Response(status=404, data={"error": "Run not found"})
+
         path = "/v1/automation/explorer/update"
 
         body = orjson.dumps(
             {
-                "run_id": run_id,
                 **request.data,
-            }
+                "run_id": int(run_id),
+                "organization_id": organization.id,
+            },
+            option=orjson.OPT_NON_STR_KEYS,
         )
 
         response = requests.post(
