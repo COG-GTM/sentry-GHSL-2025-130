@@ -44,6 +44,13 @@ class GetOrganizationMemberInviteTest(OrganizationMemberInviteTestBase):
         assert response.data["id"] == str(invited_member.id)
         assert response.data["email"] == "matcha@latte.com"
 
+    def test_cannot_access_invite_from_another_organization(self) -> None:
+        other_org = self.create_organization()
+        other_invite = self.create_member_invite(organization=other_org, email="other@tea.com")
+
+        self.get_error_response(self.organization.slug, other_invite.id, status_code=404)
+        assert OrganizationMemberInvite.objects.filter(id=other_invite.id).exists()
+
     def test_invite_request(self) -> None:
         # users can also hit this endpoint to view pending invite requests
         invited_member = self.create_member_invite(
@@ -98,6 +105,18 @@ class UpdateOrganizationMemberInviteTest(OrganizationMemberInviteTestBase):
         )
         self.approved_invite.refresh_from_db()
         assert self.approved_invite.role == "manager"
+
+    def test_cannot_update_invite_from_another_organization(self) -> None:
+        other_org = self.create_organization()
+        other_invite = self.create_member_invite(organization=other_org, email="other@tea.com")
+        other_invite_role = other_invite.role
+
+        self.get_error_response(
+            self.organization.slug, other_invite.id, orgRole="member", status_code=404
+        )
+        assert OrganizationMemberInvite.objects.filter(id=other_invite.id).exists()
+        other_invite.refresh_from_db()
+        assert other_invite.role == other_invite_role
 
     def test_cannot_update_with_invalid_role(self) -> None:
         invalid_invite = self.create_member_invite(
@@ -278,6 +297,13 @@ class DeleteOrganizationMemberInviteTest(OrganizationMemberInviteTestBase):
             organization=self.organization,
             event=audit_log.get_event_id("INVITE_REMOVE"),
         )
+
+    def test_cannot_delete_invite_from_another_organization(self):
+        other_org = self.create_organization()
+        other_invite = self.create_member_invite(organization=other_org, email="other@tea.com")
+
+        self.get_error_response(self.organization.slug, other_invite.id, status_code=404)
+        assert OrganizationMemberInvite.objects.filter(id=other_invite.id).exists()
 
     def test_reject_invite_request(self):
         invite_request = self.create_member_invite(
