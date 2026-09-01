@@ -40,6 +40,15 @@ class OrganizationMemberReinviteTest(APITestCase):
         self.get_success_response(self.organization.slug, self.approved_invite.id)
         mock_send_invite_email.assert_called_once()
 
+    def test_cannot_access_invite_from_another_organization(self):
+        other_org = self.create_organization()
+        other_invite = self.create_member_invite(
+            organization=other_org, email="other@tea.com"
+        )
+
+        self.get_error_response(self.organization.slug, other_invite.id, status_code=404)
+        assert OrganizationMemberInvite.objects.filter(id=other_invite.id).exists()
+
     @patch("sentry.models.OrganizationMemberInvite.send_invite_email")
     def test_member_resend_invite__member_invite_disabled(self, mock_send_invite_email):
         self.login_as(self.regular_user)
