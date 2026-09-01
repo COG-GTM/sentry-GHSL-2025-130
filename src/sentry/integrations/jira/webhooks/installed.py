@@ -56,16 +56,35 @@ class JiraSentryInstalledWebhook(JiraWebhookBase):
                 }
             )
 
-            if key_id:
-                if key_id in INVALID_KEY_IDS:
-                    lifecycle.record_halt(halt_reason="JWT contained invalid key_id (kid)")
-                    return self.respond(
-                        {"detail": "Invalid key id"}, status=status.HTTP_400_BAD_REQUEST
-                    )
-                decoded_claims = authenticate_asymmetric_jwt(token, key_id)
-                verify_claims(decoded_claims, request.path, request.GET, method="POST")
+            # Our descriptor opts into `signed-install`, so genuine Atlassian install
+            # callbacks always carry a `kid`. A token without one cannot be verified.
+            if not key_id:
+                lifecycle.record_halt(halt_reason="JWT missing key_id (kid)")
+                return self.respond(
+                    {"detail": "Missing key id"}, status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if key_id in INVALID_KEY_IDS:
+                lifecycle.record_halt(halt_reason="JWT contained invalid key_id (kid)")
+                return self.respond(
+                    {"detail": "Invalid key id"}, status=status.HTTP_400_BAD_REQUEST
+                )
+
+            decoded_claims = authenticate_asymmetric_jwt(token, key_id)
+            verify_claims(decoded_claims, request.path, request.GET, method="POST")
 
             data = JiraIntegrationProvider().build_integration(state)
+
+            # The verified `iss` claim is the installing tenant's clientKey; refuse to
+            # create or overwrite an integration belonging to a different tenant.
+            if decoded_claims.get("iss") != data["external_id"]:
+                lifecycle.record_halt(
+                    halt_reason="JWT issuer does not match installation clientKey"
+                )
+                return self.respond(
+                    {"detail": "Issuer mismatch"}, status=status.HTTP_400_BAD_REQUEST
+                )
+
             integration = ensure_integration(self.provider, data)
 
             # Note: Unlike in all other Jira webhooks, we don't call `bind_org_context_from_integration`
