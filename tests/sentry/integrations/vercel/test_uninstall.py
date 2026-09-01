@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+
 import responses
 
 from fixtures.vercel import SECRET
@@ -50,6 +53,13 @@ USERID_UNINSTALL_RESPONSE = """{
     }
 }"""
 
+
+def sign_body(body: str) -> str:
+    return hmac.new(
+        key=SECRET.encode("utf-8"), msg=body.encode("utf-8"), digestmod=hashlib.sha1
+    ).hexdigest()
+
+
 POST_DELETE_RESPONSE = """{
         "type": "integration-configuration.removed",
         "payload": {
@@ -101,6 +111,41 @@ class VercelUninstallTest(APITestCase):
                 integration_id=self.integration.id, organization_id=self.organization.id
             ).exists()
 
+    def test_uninstall_missing_signature(self) -> None:
+        with override_options({"vercel.client-secret": SECRET}):
+            response = self.client.delete(
+                path=self.url,
+                data=PRIMARY_UNINSTALL_RESPONSE,
+                content_type="application/json",
+            )
+
+            assert response.status_code == 401
+            assert Integration.objects.filter(id=self.integration.id).exists()
+
+    def test_uninstall_invalid_signature(self) -> None:
+        with override_options({"vercel.client-secret": SECRET}):
+            response = self.client.delete(
+                path=self.url,
+                data=PRIMARY_UNINSTALL_RESPONSE,
+                content_type="application/json",
+                HTTP_X_VERCEL_SIGNATURE="0" * 40,
+            )
+
+            assert response.status_code == 401
+            assert Integration.objects.filter(id=self.integration.id).exists()
+
+    def test_uninstall_missing_secret(self) -> None:
+        with override_options({"vercel.client-secret": ""}):
+            response = self.client.delete(
+                path=self.url,
+                data=PRIMARY_UNINSTALL_RESPONSE,
+                content_type="application/json",
+                HTTP_X_VERCEL_SIGNATURE=sign_body(PRIMARY_UNINSTALL_RESPONSE),
+            )
+
+            assert response.status_code == 401
+            assert Integration.objects.filter(id=self.integration.id).exists()
+
 
 @control_silo_test
 class VercelUninstallWithConfigurationsTest(APITestCase):
@@ -144,11 +189,13 @@ class VercelUninstallWithConfigurationsTest(APITestCase):
         """
 
         assert len(OrganizationIntegration.objects.all()) == 2
-        response = self.client.delete(
-            path=self.url,
-            data=PRIMARY_UNINSTALL_RESPONSE,
-            content_type="application/json",
-        )
+        with override_options({"vercel.client-secret": SECRET}):
+            response = self.client.delete(
+                path=self.url,
+                data=PRIMARY_UNINSTALL_RESPONSE,
+                content_type="application/json",
+                HTTP_X_VERCEL_SIGNATURE=sign_body(PRIMARY_UNINSTALL_RESPONSE),
+            )
 
         assert response.status_code == 204
         assert len(OrganizationIntegration.objects.all()) == 1
@@ -176,11 +223,13 @@ class VercelUninstallWithConfigurationsTest(APITestCase):
 
         assert len(OrganizationIntegration.objects.all()) == 2
 
-        response = self.client.delete(
-            path=self.url,
-            data=NONPRIMARY_UNINSTALL_RESPONSE,
-            content_type="application/json",
-        )
+        with override_options({"vercel.client-secret": SECRET}):
+            response = self.client.delete(
+                path=self.url,
+                data=NONPRIMARY_UNINSTALL_RESPONSE,
+                content_type="application/json",
+                HTTP_X_VERCEL_SIGNATURE=sign_body(NONPRIMARY_UNINSTALL_RESPONSE),
+            )
 
         assert response.status_code == 204
         assert len(OrganizationIntegration.objects.all()) == 1
@@ -227,11 +276,13 @@ class VercelUninstallWithConfigurationsTest(APITestCase):
         )
         integration.add_organization(org)
 
-        response = self.client.delete(
-            path=self.url,
-            data=USERID_UNINSTALL_RESPONSE,
-            content_type="application/json",
-        )
+        with override_options({"vercel.client-secret": SECRET}):
+            response = self.client.delete(
+                path=self.url,
+                data=USERID_UNINSTALL_RESPONSE,
+                content_type="application/json",
+                HTTP_X_VERCEL_SIGNATURE=sign_body(USERID_UNINSTALL_RESPONSE),
+            )
 
         assert response.status_code == 204
         assert not Integration.objects.filter(id=integration.id).exists()
@@ -274,11 +325,13 @@ class VercelUninstallWithConfigurationsTest(APITestCase):
             == 1
         )
 
-        response = self.client.delete(
-            path=self.url,
-            data=PRIMARY_UNINSTALL_RESPONSE,
-            content_type="application/json",
-        )
+        with override_options({"vercel.client-secret": SECRET}):
+            response = self.client.delete(
+                path=self.url,
+                data=PRIMARY_UNINSTALL_RESPONSE,
+                content_type="application/json",
+                HTTP_X_VERCEL_SIGNATURE=sign_body(PRIMARY_UNINSTALL_RESPONSE),
+            )
         assert response.status_code == 204
 
         integration = Integration.objects.get(id=self.integration.id)
@@ -319,11 +372,13 @@ class VercelUninstallWithConfigurationsTest(APITestCase):
             == 0
         )
 
-        response = self.client.delete(
-            path=self.url,
-            data=NONPRIMARY_UNINSTALL_RESPONSE,
-            content_type="application/json",
-        )
+        with override_options({"vercel.client-secret": SECRET}):
+            response = self.client.delete(
+                path=self.url,
+                data=NONPRIMARY_UNINSTALL_RESPONSE,
+                content_type="application/json",
+                HTTP_X_VERCEL_SIGNATURE=sign_body(NONPRIMARY_UNINSTALL_RESPONSE),
+            )
         assert response.status_code == 204
         assert not Integration.objects.filter(id=self.integration.id).exists()
 
