@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 from collections.abc import Mapping
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -111,17 +114,20 @@ class JiraInstalledTest(APITestCase):
         )
 
     @patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
-    @patch("sentry_sdk.set_tag")
-    def test_with_shared_secret(self, mock_set_tag: MagicMock, mock_record_event) -> None:
-        self.get_success_response(
+    def test_rejects_token_without_key_id(self, mock_record_event: MagicMock) -> None:
+        self.get_error_response(
             **self.body(),
             extra_headers=dict(HTTP_AUTHORIZATION="JWT " + self.jwt_token_secret()),
+            status_code=status.HTTP_400_BAD_REQUEST,
         )
-        integration = Integration.objects.get(provider="jira", external_id=self.external_id)
 
-        mock_set_tag.assert_any_call("integration_id", integration.id)
-        assert integration.status == ObjectStatus.ACTIVE
-        mock_record_event.assert_called_with(EventLifecycleOutcome.SUCCESS, None, False, None)
+        assert not Integration.objects.filter(
+            provider="jira", external_id=self.external_id
+        ).exists()
+        assert_count_of_metric(mock_record_event, EventLifecycleOutcome.STARTED, 3)
+        assert_count_of_metric(mock_record_event, EventLifecycleOutcome.HALTED, 1)
+        assert_count_of_metric(mock_record_event, EventLifecycleOutcome.SUCCESS, 2)
+        assert_halt_metric(mock_record_event, "JWT missing key_id (kid)")
 
     @patch("sentry_sdk.set_tag")
     @responses.activate
@@ -157,3 +163,49 @@ class JiraInstalledTest(APITestCase):
             mock_record_event,
             "JWT contained invalid key_id (kid)",
         )
+
+    @patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    @responses.activate
+    def test_rejects_issuer_mismatch(self, mock_record_event: MagicMock) -> None:
+        self.add_response()
+        body = dict(self.body())
+        body["jira"] = {**body["jira"], "external_id": "someone-elses-tenant"}
+
+        self.get_error_response(
+            **body,
+            extra_headers=dict(HTTP_AUTHORIZATION="JWT " + self.jwt_token_cdn()),
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+        assert not Integration.objects.filter(
+            provider="jira", external_id="someone-elses-tenant"
+        ).exists()
+        assert_halt_metric(mock_record_event, "JWT issuer does not match installation clientKey")
+
+    @responses.activate
+    def test_rejects_algorithm_downgrade(self) -> None:
+        self.add_response()
+        token = self._jwt_token("HS256", "unused", headers={"kid": self.kid})
+        encoded_header, encoded_payload, _ = token.split(".")
+        signature = hmac.new(
+            RS256_PUB_KEY.encode("utf-8"),
+            f"{encoded_header}.{encoded_payload}".encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        token = ".".join(
+            [
+                encoded_header,
+                encoded_payload,
+                base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii"),
+            ]
+        )
+
+        self.get_error_response(
+            **self.body(),
+            extra_headers=dict(HTTP_AUTHORIZATION="JWT " + token),
+            status_code=status.HTTP_409_CONFLICT,
+        )
+
+        assert not Integration.objects.filter(
+            provider="jira", external_id=self.external_id
+        ).exists()

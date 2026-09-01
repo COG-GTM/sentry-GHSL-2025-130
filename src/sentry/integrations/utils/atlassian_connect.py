@@ -123,11 +123,13 @@ def authenticate_asymmetric_jwt(token: str | None, key_id: str) -> dict[str, str
     if token is None:
         raise AtlassianConnectValidationError("No token parameter")
     headers = jwt.peek_header(token)
+    # Atlassian signs install lifecycle tokens with RS256. Honoring the token's own `alg`
+    # would let a forged token downgrade verification to HMAC keyed on the public key.
+    if headers.get("alg") != "RS256":
+        raise AtlassianConnectValidationError("Invalid installation JWT algorithm")
     key_response = requests.get(f"https://connect-install-keys.atlassian.com/{key_id}")
     public_key = key_response.content.decode("utf-8").strip()
-    decoded_claims = jwt.decode(
-        token, public_key, audience=absolute_uri(), algorithms=[headers.get("alg")]
-    )
+    decoded_claims = jwt.decode(token, public_key, audience=absolute_uri(), algorithms=["RS256"])
     if not decoded_claims:
         raise AtlassianConnectValidationError("Unable to verify asymmetric installation JWT")
     return decoded_claims
