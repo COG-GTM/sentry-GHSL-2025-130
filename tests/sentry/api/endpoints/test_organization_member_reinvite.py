@@ -42,9 +42,7 @@ class OrganizationMemberReinviteTest(APITestCase):
 
     def test_cannot_access_invite_from_another_organization(self):
         other_org = self.create_organization()
-        other_invite = self.create_member_invite(
-            organization=other_org, email="other@tea.com"
-        )
+        other_invite = self.create_member_invite(organization=other_org, email="other@tea.com")
 
         self.get_error_response(self.organization.slug, other_invite.id, status_code=404)
         assert OrganizationMemberInvite.objects.filter(id=other_invite.id).exists()
