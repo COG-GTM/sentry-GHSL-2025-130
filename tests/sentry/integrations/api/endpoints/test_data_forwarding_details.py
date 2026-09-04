@@ -277,6 +277,46 @@ class DataForwardingDetailsPutTest(DataForwardingDetailsEndpointTest):
         assert project_config.overrides == {"new": "value"}
         assert not project_config.is_enabled
 
+    def test_update_project_overrides_masks_secrets_for_project_write(self) -> None:
+        data_forwarder = self.create_data_forwarder(
+            provider=DataForwarderProviderSlug.SQS,
+            config={
+                "queue_url": "https://sqs.us-east-1.amazonaws.com/123456789012/test-queue",
+                "region": "us-east-1",
+                "access_key": "AKIA_PUT_SECRET",
+                "secret_key": "put_secret_key",
+            },
+        )
+        project = self.create_project(organization=self.organization)
+        self.create_data_forwarder_project(
+            data_forwarder=data_forwarder,
+            project=project,
+            overrides={"secret_key": "put_override_secret"},
+        )
+
+        user = self.create_user()
+        self.create_member(
+            user=user,
+            organization=self.organization,
+            role="member",
+            teams=[self.team],
+            teamRole="admin",
+        )
+        self.login_as(user=user)
+
+        response = self.get_success_response(
+            self.organization.slug,
+            data_forwarder.id,
+            status_code=200,
+            project_id=project.id,
+            overrides={"region": "us-west-2"},
+            is_enabled=False,
+        )
+
+        assert "AKIA_PUT_SECRET" not in response.content.decode()
+        assert "put_secret_key" not in response.content.decode()
+        assert "put_override_secret" not in response.content.decode()
+
     def test_update_unenroll_projects_with_project_write(self) -> None:
         data_forwarder = self.create_data_forwarder(
             provider=DataForwarderProviderSlug.SEGMENT,

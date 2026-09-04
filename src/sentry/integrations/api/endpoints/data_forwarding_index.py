@@ -18,6 +18,9 @@ from sentry.apidocs.examples.integration_examples import IntegrationExamples
 from sentry.apidocs.parameters import GlobalParams
 from sentry.apidocs.utils import inline_sentry_response_serializer
 from sentry.integrations.api.serializers.models.data_forwarder import DataForwarderResponse
+from sentry.integrations.api.serializers.models.data_forwarder import (
+    DataForwarderSerializer as DataForwarderModelSerializer,
+)
 from sentry.integrations.api.serializers.rest_framework.data_forwarder import (
     DataForwarderSerializer,
 )
@@ -71,7 +74,13 @@ class DataForwardingIndexEndpoint(OrganizationEndpoint):
         return self.paginate(
             request=request,
             queryset=queryset,
-            on_results=lambda x: serialize(x, request.user),
+            on_results=lambda x: serialize(
+                x,
+                request.user,
+                DataForwarderModelSerializer(
+                    mask_secrets=not request.access.has_scope("org:write")
+                ),
+            ),
             paginator_cls=OffsetPaginator,
         )
 
@@ -106,5 +115,10 @@ class DataForwardingIndexEndpoint(OrganizationEndpoint):
             return self.respond(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         return self.respond(
-            serialize(serializer.save(), request.user), status=status.HTTP_201_CREATED
+            serialize(
+                serializer.save(),
+                request.user,
+                DataForwarderModelSerializer(mask_secrets=False),
+            ),
+            status=status.HTTP_201_CREATED,
         )
