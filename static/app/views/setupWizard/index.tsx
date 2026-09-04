@@ -7,14 +7,22 @@ import {t} from 'sentry/locale';
 import {useSetupWizardViewedAnalytics} from 'sentry/views/setupWizard/utils/setupWizardAnalytics';
 import {useOrganizationsWithRegion} from 'sentry/views/setupWizard/utils/useOrganizationsWithRegion';
 import {WaitingForWizardToConnect} from 'sentry/views/setupWizard/waitingForWizardToConnect';
+import {WizardPreselectedProject} from 'sentry/views/setupWizard/wizardPreselectedProject';
 import {WizardProjectSelection} from 'sentry/views/setupWizard/wizardProjectSelection';
 
 type Props = {
   hash: string;
   enableProjectSelection?: boolean;
+  preselectedOrganizationId?: string | null;
+  preselectedProjectId?: string | null;
 };
 
-function SetupWizard({hash, enableProjectSelection = false}: Props) {
+function SetupWizard({
+  hash,
+  enableProjectSelection = false,
+  preselectedOrganizationId = null,
+  preselectedProjectId = null,
+}: Props) {
   const {data: organizations, isError, isLoading} = useOrganizationsWithRegion();
 
   useSetupWizardViewedAnalytics(organizations);
@@ -30,7 +38,14 @@ function SetupWizard({hash, enableProjectSelection = false}: Props) {
   return (
     <Fragment>
       <Indicators />
-      {enableProjectSelection ? (
+      {enableProjectSelection && preselectedOrganizationId && preselectedProjectId ? (
+        <WizardPreselectedProject
+          hash={hash}
+          organizations={organizations}
+          organizationId={preselectedOrganizationId}
+          projectId={preselectedProjectId}
+        />
+      ) : enableProjectSelection ? (
         <WizardProjectSelection hash={hash} organizations={organizations} />
       ) : (
         <WaitingForWizardToConnect hash={hash} organizations={organizations} />

@@ -26,6 +26,8 @@
         hash: {{ hash|to_json|safe }},
         organizations: {{ organizations|to_json|safe }},
         enableProjectSelection: {{ enableProjectSelection|to_json|safe }},
+        preselectedOrganizationId: {{ preselectedOrganizationId|to_json|safe }},
+        preselectedProjectId: {{ preselectedProjectId|to_json|safe }},
       },
     });
   </script>

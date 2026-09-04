@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections import defaultdict
 from datetime import date
 from typing import Any
@@ -12,7 +13,11 @@ from django.http.response import HttpResponseBase
 from django.shortcuts import get_object_or_404
 
 from sentry.api.base import allow_cors_options
-from sentry.api.endpoints.setup_wizard import SETUP_WIZARD_CACHE_KEY, SETUP_WIZARD_CACHE_TIMEOUT
+from sentry.api.endpoints.setup_wizard import (
+    SETUP_WIZARD_CACHE_KEY,
+    SETUP_WIZARD_CACHE_TIMEOUT,
+    SETUP_WIZARD_OWNER_CACHE_KEY,
+)
 from sentry.api.serializers import serialize
 from sentry.api.serializers.models.project import STATUS_LABELS
 from sentry.api.utils import generate_region_url
@@ -43,6 +48,33 @@ from sentry.web.frontend.base import BaseView, control_silo_view
 from sentry.web.helpers import render_to_response
 
 
+def get_session_fingerprint(request: HttpRequest) -> str:
+    if not request.session.session_key:
+        request.session.save()
+    return hashlib.sha256(str(request.session.session_key).encode()).hexdigest()
+
+
+def bind_wizard_hash_to_session(request: HttpRequest, wizard_hash: str) -> bool:
+    """
+    Binds the wizard hash to the first authenticated session that opens it and
+    reports whether the current session is that owner. A hash that is bound to
+    another session can neither be populated nor re-bound.
+    """
+    owner_key = f"{SETUP_WIZARD_OWNER_CACHE_KEY}{wizard_hash}"
+    fingerprint = get_session_fingerprint(request)
+    owner = default_cache.get(owner_key)
+    if owner is None:
+        default_cache.set(owner_key, fingerprint, SETUP_WIZARD_CACHE_TIMEOUT)
+        return True
+    return owner == fingerprint
+
+
+def is_wizard_hash_owner(request: HttpRequest, wizard_hash: str) -> bool:
+    owner_key = f"{SETUP_WIZARD_OWNER_CACHE_KEY}{wizard_hash}"
+    owner = default_cache.get(owner_key)
+    return owner is not None and owner == get_session_fingerprint(request)
+
+
 @control_silo_view
 class SetupWizardView(BaseView):
     def handle_auth_required(self, request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponse:
@@ -67,7 +99,9 @@ class SetupWizardView(BaseView):
     @allow_cors_options
     def get(self, request: HttpRequest, wizard_hash) -> HttpResponseBase:
         """
-        This opens a page where with an active session fill stuff into the cache
+        This opens a page where an active session can select the project to
+        be written into the cache. It never writes to the cache itself; the
+        CSRF-protected POST handler does that.
         Redirects to organization whenever cache has been deleted
         """
         if is_demo_user(request.user):
@@ -75,9 +109,11 @@ class SetupWizardView(BaseView):
         elif not request.user.is_authenticated:
             return HttpResponse(status=400)
 
-        context = {
+        context: dict[str, Any] = {
             "hash": wizard_hash,
             "enableProjectSelection": False,
+            "preselectedOrganizationId": None,
+            "preselectedProjectId": None,
             "react_config": get_client_config(request, self.active_organization),
         }
         cache_key = f"{SETUP_WIZARD_CACHE_KEY}{wizard_hash}"
@@ -88,6 +124,9 @@ class SetupWizardView(BaseView):
         wizard_data = default_cache.get(cache_key)
         if wizard_data is None:
             return self.redirect_to_org(request)
+
+        if not bind_wizard_hash_to_session(request, wizard_hash):
+            return HttpResponse(status=403)
 
         member_org_ids = OrganizationMemberMapping.objects.filter(
             user_id=request.user.id
@@ -109,8 +148,9 @@ class SetupWizardView(BaseView):
         context["organizations"] = list(org_mappings_map.values())
         context["enableProjectSelection"] = True
 
-        # If org_slug and project_slug are provided, we will use them to select the project
-        # If the project is not found or the slugs are not provided, we will show the project selection
+        # If org_slug and project_slug resolve to a project the user is a member of, the
+        # frontend submits that selection through the POST handler instead of the user
+        # picking it manually. The token is only minted by that POST.
         if org_slug is not None and project_slug is not None:
             target_org_mapping = next(
                 (mapping for mapping in org_mappings if mapping.slug == org_slug), None
@@ -121,11 +161,8 @@ class SetupWizardView(BaseView):
                 )
 
                 if target_project is not None:
-                    cache_data = get_cache_data(
-                        mapping=target_org_mapping, project=target_project, user=request.user
-                    )
-                    default_cache.set(cache_key, cache_data, SETUP_WIZARD_CACHE_TIMEOUT)
-                    context["enableProjectSelection"] = False
+                    context["preselectedOrganizationId"] = str(target_org_mapping.organization_id)
+                    context["preselectedProjectId"] = str(target_project.id)
 
         return render_to_response("sentry/setup-wizard.html", context, request)
 
@@ -151,6 +188,21 @@ class SetupWizardView(BaseView):
             return HttpResponse(
                 status=400,
                 content='{"error":"Some parameters are missing"}',
+                content_type="application/json",
+            )
+
+        key = f"{SETUP_WIZARD_CACHE_KEY}{wizard_hash}"
+        if default_cache.get(key) is None:
+            return HttpResponse(
+                status=404,
+                content='{"error":"Wizard session not found"}',
+                content_type="application/json",
+            )
+
+        if not is_wizard_hash_owner(request, wizard_hash):
+            return HttpResponse(
+                status=403,
+                content='{"error":"Forbidden"}',
                 content_type="application/json",
             )
 
@@ -180,7 +232,6 @@ class SetupWizardView(BaseView):
                 content_type="application/json",
             )
 
-        key = f"{SETUP_WIZARD_CACHE_KEY}{wizard_hash}"
         default_cache.set(key, cache_data, SETUP_WIZARD_CACHE_TIMEOUT)
         return HttpResponse(status=200, content="{}", content_type="application/json")
 

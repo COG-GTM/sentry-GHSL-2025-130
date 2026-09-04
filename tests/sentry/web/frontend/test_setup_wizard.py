@@ -1,8 +1,12 @@
 from django.test.utils import override_settings
 from django.urls import reverse
 
-from sentry.api.endpoints.setup_wizard import SETUP_WIZARD_CACHE_KEY
+from sentry.api.endpoints.setup_wizard import (
+    SETUP_WIZARD_CACHE_KEY,
+    SETUP_WIZARD_OWNER_CACHE_KEY,
+)
 from sentry.cache import default_cache
+from sentry.models.orgauthtoken import OrgAuthToken
 from sentry.testutils.cases import PermissionTestCase
 from sentry.testutils.helpers.options import override_options
 from sentry.testutils.silo import control_silo_test
@@ -65,7 +69,9 @@ class SetupWizard(PermissionTestCase):
 
         assert cached == "test"
 
-    def test_skips_selection_when_given_org_and_project_slug_and(self) -> None:
+    def test_preselects_project_without_writing_cache_when_given_org_and_project_slug(
+        self,
+    ) -> None:
         self.org = self.create_organization(owner=self.user)
         self.team = self.create_team(organization=self.org, name="Mariachi Band")
         self.project = self.create_project(organization=self.org, teams=[self.team], name="Bengal")
@@ -73,19 +79,49 @@ class SetupWizard(PermissionTestCase):
         self.login_as(self.user)
 
         key = f"{SETUP_WIZARD_CACHE_KEY}abc"
-        default_cache.set(key, "test", 600)
+        default_cache.set(key, "empty", 600)
 
         url = reverse("sentry-project-wizard-fetch", kwargs={"wizard_hash": "abc"})
         resp = self.client.get(f"{url}?org_slug={self.org.slug}&project_slug={self.project.slug}")
 
         assert resp.status_code == 200
         self.assertTemplateUsed(resp, "sentry/setup-wizard.html")
-        assert resp.context["enableProjectSelection"] is False
-        cached = default_cache.get(key)
+        assert resp.context["enableProjectSelection"] is True
+        assert resp.context["preselectedOrganizationId"] == str(self.org.id)
+        assert resp.context["preselectedProjectId"] == str(self.project.id)
 
-        assert len(cached.get("projects")) == 1
-        cached_project = cached.get("projects")[0]
-        assert cached_project.get("id") == self.project.id
+        # A GET must never provision a token or populate the wizard cache
+        assert default_cache.get(key) == "empty"
+        assert not OrgAuthToken.objects.filter(organization_id=self.org.id).exists()
+
+    def test_get_binds_hash_to_session(self) -> None:
+        self.create_organization(owner=self.user)
+        self.login_as(self.user)
+
+        key = f"{SETUP_WIZARD_CACHE_KEY}abc"
+        default_cache.set(key, "empty", 600)
+
+        url = reverse("sentry-project-wizard-fetch", kwargs={"wizard_hash": "abc"})
+        resp = self.client.get(url)
+        assert resp.status_code == 200
+        assert default_cache.get(f"{SETUP_WIZARD_OWNER_CACHE_KEY}abc") is not None
+
+        # The same session may open the page again
+        resp = self.client.get(url)
+        assert resp.status_code == 200
+
+    def test_get_rejects_hash_bound_to_other_session(self) -> None:
+        self.create_organization(owner=self.user)
+        self.login_as(self.user)
+
+        key = f"{SETUP_WIZARD_CACHE_KEY}abc"
+        default_cache.set(key, "empty", 600)
+        default_cache.set(f"{SETUP_WIZARD_OWNER_CACHE_KEY}abc", "someone-else", 600)
+
+        url = reverse("sentry-project-wizard-fetch", kwargs={"wizard_hash": "abc"})
+        resp = self.client.get(url)
+        assert resp.status_code == 403
+        assert default_cache.get(f"{SETUP_WIZARD_OWNER_CACHE_KEY}abc") == "someone-else"
 
     def test_renders_selection_when_given_only_org_slug(self) -> None:
         self.org = self.create_organization(owner=self.user)
@@ -103,6 +139,7 @@ class SetupWizard(PermissionTestCase):
         assert resp.status_code == 200
         self.assertTemplateUsed(resp, "sentry/setup-wizard.html")
         assert resp.context["enableProjectSelection"] is True
+        assert resp.context["preselectedProjectId"] is None
 
         assert default_cache.get(key) == "test"
 
@@ -121,6 +158,7 @@ class SetupWizard(PermissionTestCase):
         assert resp.status_code == 200
         self.assertTemplateUsed(resp, "sentry/setup-wizard.html")
         assert resp.context["enableProjectSelection"] is True
+        assert resp.context["preselectedProjectId"] is None
 
         assert default_cache.get(key) == "test"
 
@@ -139,6 +177,7 @@ class SetupWizard(PermissionTestCase):
         assert resp.status_code == 200
         self.assertTemplateUsed(resp, "sentry/setup-wizard.html")
         assert resp.context["enableProjectSelection"] is True
+        assert resp.context["preselectedProjectId"] is None
 
         assert default_cache.get(key) == "test"
 
@@ -178,6 +217,7 @@ class SetupWizard(PermissionTestCase):
         default_cache.set(key, "test", 600)
 
         url = reverse("sentry-project-wizard-fetch", kwargs={"wizard_hash": "abc"})
+        self.client.get(url)
         resp = self.client.post(
             path=url,
             data={"organizationId": self.org.id, "projectId": self.project.id},
@@ -196,6 +236,58 @@ class SetupWizard(PermissionTestCase):
         assert cached_project.get("status") == "active"
         assert cached_project.get("keys")[0].get("isActive")
         assert cached_project.get("organization").get("status").get("id") == "active"
+
+    def test_post_rejected_without_prior_get_in_session(self) -> None:
+        self.org = self.create_organization(owner=self.user)
+        self.project = self.create_project(organization=self.org)
+        self.login_as(self.user)
+
+        key = f"{SETUP_WIZARD_CACHE_KEY}abc"
+        default_cache.set(key, "empty", 600)
+
+        url = reverse("sentry-project-wizard-fetch", kwargs={"wizard_hash": "abc"})
+        resp = self.client.post(
+            path=url,
+            data={"organizationId": self.org.id, "projectId": self.project.id},
+            content_type="application/json",
+        )
+
+        assert resp.status_code == 403
+        assert default_cache.get(key) == "empty"
+        assert not OrgAuthToken.objects.filter(organization_id=self.org.id).exists()
+
+    def test_post_rejected_for_hash_bound_to_other_session(self) -> None:
+        self.org = self.create_organization(owner=self.user)
+        self.project = self.create_project(organization=self.org)
+        self.login_as(self.user)
+
+        key = f"{SETUP_WIZARD_CACHE_KEY}abc"
+        default_cache.set(key, "empty", 600)
+        default_cache.set(f"{SETUP_WIZARD_OWNER_CACHE_KEY}abc", "someone-else", 600)
+
+        url = reverse("sentry-project-wizard-fetch", kwargs={"wizard_hash": "abc"})
+        resp = self.client.post(
+            path=url,
+            data={"organizationId": self.org.id, "projectId": self.project.id},
+            content_type="application/json",
+        )
+
+        assert resp.status_code == 403
+        assert default_cache.get(key) == "empty"
+
+    def test_post_unknown_hash(self) -> None:
+        self.org = self.create_organization(owner=self.user)
+        self.project = self.create_project(organization=self.org)
+        self.login_as(self.user)
+
+        url = reverse("sentry-project-wizard-fetch", kwargs={"wizard_hash": "missing"})
+        resp = self.client.post(
+            path=url,
+            data={"organizationId": self.org.id, "projectId": self.project.id},
+            content_type="application/json",
+        )
+
+        assert resp.status_code == 404
 
     def test_post_bad_request(self) -> None:
         self.login_as(self.user)
@@ -226,6 +318,7 @@ class SetupWizard(PermissionTestCase):
         default_cache.set(key, "test", 600)
 
         url = reverse("sentry-project-wizard-fetch", kwargs={"wizard_hash": "abc"})
+        self.client.get(url)
         resp = self.client.post(
             path=url,
             data={"organizationId": self.org.id, "projectId": 1234},
@@ -241,6 +334,7 @@ class SetupWizard(PermissionTestCase):
         default_cache.set(key, "test", 600)
 
         url = reverse("sentry-project-wizard-fetch", kwargs={"wizard_hash": "abc"})
+        self.client.get(url)
         resp = self.client.post(
             path=url,
             data={"organizationId": 1234, "projectId": 1234},
@@ -258,6 +352,7 @@ class SetupWizard(PermissionTestCase):
         default_cache.set(key, "test", 600)
 
         url = reverse("sentry-project-wizard-fetch", kwargs={"wizard_hash": "abc"})
+        self.client.get(url)
         resp = self.client.post(
             path=url,
             data={"organizationId": self.org.id, "projectId": self.project.id},
@@ -275,6 +370,7 @@ class SetupWizard(PermissionTestCase):
         default_cache.set(key, "test", 600)
 
         url = reverse("sentry-project-wizard-fetch", kwargs={"wizard_hash": "abc"})
+        self.client.get(url)
         resp = self.client.post(
             path=url,
             data={"organizationId": self.org.id, "projectId": self.project.id},
