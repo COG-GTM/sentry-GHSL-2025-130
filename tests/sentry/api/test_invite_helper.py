@@ -6,6 +6,7 @@ from sentry.models.organizationmember import OrganizationMember
 from sentry.organizations.services.organization import organization_service
 from sentry.silo.base import SiloMode
 from sentry.testutils.cases import TestCase
+from sentry.testutils.factories import Factories
 from sentry.testutils.silo import assume_test_silo_mode
 
 
@@ -56,29 +57,38 @@ class ApiInviteHelperTest(TestCase):
     def test_invite_already_accepted_without_SSO(self) -> None:
         om = self._get_om_from_accepting_invite()
 
+        pending = Factories.create_member(
+            email="dupe@example.com",
+            organization=self.org,
+            token="dupe-token",
+            role="member",
+        )
         invite_context = organization_service.get_invite_by_id(
-            organization_member_id=om.id, organization_id=om.organization_id
+            organization_member_id=pending.id,
+            organization_id=self.org.id,
+            user_id=self.user.id,
         )
         assert invite_context is not None
-        member_id = invite_context.invite_organization_member_id
-        assert member_id is not None
+        assert invite_context.invite_organization_member_id == pending.id
 
-        # Without this member_id, don't delete the organization member
-        invite_context.invite_organization_member_id = None
         helper = ApiInviteHelper(self.request, invite_context, None)
         with assume_test_silo_mode(SiloMode.CONTROL):
             helper.accept_invite(self.user)
-        om.refresh_from_db()
-        assert om.email is None
-        assert om.user_id == self.user.id
+        assert OrganizationMember.objects.filter(id=pending.id).exists()
 
-        # With the member_id, ensure it's deleted
-        invite_context.invite_organization_member_id = member_id
-        helper = ApiInviteHelper(self.request, invite_context, None)
+        helper = ApiInviteHelper(self.request, invite_context, "wrong")
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            helper.accept_invite(self.user)
+        assert OrganizationMember.objects.filter(id=pending.id).exists()
+
+        helper = ApiInviteHelper(self.request, invite_context, pending.token)
         with assume_test_silo_mode(SiloMode.CONTROL):
             helper.accept_invite(self.user)
         with pytest.raises(OrganizationMember.DoesNotExist):
-            OrganizationMember.objects.get(id=self.member.id)
+            OrganizationMember.objects.get(id=pending.id)
+        om.refresh_from_db()
+        assert om.email is None
+        assert om.user_id == self.user.id
 
     def test_accept_invite_with_optional_SSO(self) -> None:
         ap = self.create_auth_provider(organization_id=self.org.id, provider="Friendly IdP")

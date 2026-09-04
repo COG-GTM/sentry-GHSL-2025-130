@@ -350,6 +350,56 @@ class AcceptInviteTest(TestCase, HybridCloudTestMixin):
                 assert not OrganizationMember.objects.filter(id=om2.id).exists()
             self.assert_org_member_mapping_not_exists(org_member=om2)
 
+    def test_cannot_delete_other_org_member_via_accept_invite(self) -> None:
+        user_a = self.create_user("owner@example.com")
+        organization_a = self.create_organization(owner=user_a)
+        other_org = self.create_organization()
+        victim = self.create_member(
+            organization=other_org,
+            user=self.create_user("victim@example.com"),
+            role="owner",
+        )
+        self.login_as(user_a)
+
+        paths = (
+            reverse(
+                "sentry-api-0-accept-organization-invite",
+                args=[victim.id, "whatever"],
+            ),
+            reverse(
+                "sentry-api-0-organization-accept-organization-invite",
+                args=[organization_a.slug, victim.id, "whatever"],
+            ),
+            reverse(
+                "sentry-api-0-organization-accept-organization-invite",
+                args=[organization_a.id, victim.id, "whatever"],
+            ),
+        )
+        for path in paths:
+            resp = self.client.post(path)
+            assert resp.status_code == 400
+
+        with assume_test_silo_mode_of(OrganizationMember):
+            assert OrganizationMember.objects.filter(id=victim.id).exists()
+
+    def test_cannot_delete_pending_invite_without_token(self) -> None:
+        user = self.create_user("existing@example.com")
+        self.create_member(organization=self.organization, user=user, role="member")
+        pending = Factories.create_member(
+            email="pending@example.com",
+            role="member",
+            token="pending-token",
+            organization=self.organization,
+        )
+        self.login_as(user)
+
+        for path in self._get_paths([pending.id, "wrong-token"]):
+            resp = self.client.post(path)
+            assert resp.status_code == 400
+
+        with assume_test_silo_mode_of(OrganizationMember):
+            assert OrganizationMember.objects.filter(id=pending.id).exists()
+
     def test_can_accept_when_user_has_2fa(self) -> None:
         urls = self._get_urls()
 
