@@ -11,6 +11,12 @@ from sentry.integrations.models.data_forwarder_project import DataForwarderProje
 from sentry.users.models.user import User
 from sentry.users.services.user import RpcUser
 
+SECRET_CONFIG_KEYS = frozenset({"access_key", "secret_key", "token", "write_key"})
+
+
+def redact_secret_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in config.items() if key not in SECRET_CONFIG_KEYS}
+
 
 class ProjectResponse(TypedDict):
     id: str
@@ -44,6 +50,9 @@ class DataForwarderResponse(TypedDict):
 
 @register(DataForwarder)
 class DataForwarderSerializer(Serializer):
+    def __init__(self, mask_secrets: bool = True) -> None:
+        self.mask_secrets = mask_secrets
+
     def get_attrs(
         self,
         item_list: Sequence[DataForwarder],
@@ -85,9 +94,14 @@ class DataForwarderSerializer(Serializer):
                 for project_config in project_configs
             ],
             "provider": obj.provider,
-            "config": obj.config,
+            "config": redact_secret_config(obj.config) if self.mask_secrets else obj.config,
             "projectConfigs": [
-                serialize(project_config, user=user) for project_config in project_configs
+                serialize(
+                    project_config,
+                    user=user,
+                    serializer=DataForwarderProjectSerializer(mask_secrets=self.mask_secrets),
+                )
+                for project_config in project_configs
             ],
             "dateAdded": obj.date_added,
             "dateUpdated": obj.date_updated,
@@ -96,6 +110,9 @@ class DataForwarderSerializer(Serializer):
 
 @register(DataForwarderProject)
 class DataForwarderProjectSerializer(Serializer):
+    def __init__(self, mask_secrets: bool = True) -> None:
+        self.mask_secrets = mask_secrets
+
     def serialize(
         self,
         obj: DataForwarderProject,
@@ -103,6 +120,8 @@ class DataForwarderProjectSerializer(Serializer):
         user: User | RpcUser | AnonymousUser,
         **kwargs: Any,
     ) -> DataForwarderProjectResponse:
+        effective_config = obj.get_config()
+
         return {
             "id": str(obj.id),
             "isEnabled": obj.is_enabled,
@@ -112,8 +131,12 @@ class DataForwarderProjectSerializer(Serializer):
                 "slug": obj.project.slug,
                 "platform": obj.project.platform,
             },
-            "overrides": obj.overrides,
-            "effectiveConfig": obj.get_config(),
+            "overrides": (
+                redact_secret_config(obj.overrides) if self.mask_secrets else obj.overrides
+            ),
+            "effectiveConfig": (
+                redact_secret_config(effective_config) if self.mask_secrets else effective_config
+            ),
             "dateAdded": obj.date_added,
             "dateUpdated": obj.date_updated,
         }

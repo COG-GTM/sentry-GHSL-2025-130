@@ -64,6 +64,66 @@ class DataForwardingIndexGetTest(DataForwardingIndexEndpointTest):
         assert response.data[0]["config"] == {"write_key": "test_key"}
         assert response.data[0]["isEnabled"] is True
 
+    def test_get_masks_secrets_for_member_without_org_write(self) -> None:
+        data_forwarder = self.create_data_forwarder(
+            provider=DataForwarderProviderSlug.SQS,
+            config={
+                "queue_url": "https://sqs.us-east-1.amazonaws.com/123456789012/test-queue",
+                "region": "us-east-1",
+                "access_key": "AKIA_MEMBER_SECRET",
+                "secret_key": "member_secret_key",
+            },
+        )
+        self.create_data_forwarder_project(
+            data_forwarder=data_forwarder,
+            project=self.project,
+            overrides={"secret_key": "member_override_secret", "region": "us-west-2"},
+        )
+        member = self.create_member(
+            organization=self.organization,
+            user=self.create_user(),
+            role="member",
+        )
+        self.login_as(user=member.user)
+
+        response = self.get_success_response(self.organization.slug)
+        data = response.data[0]
+        project_config = data["projectConfigs"][0]
+
+        assert data["config"] == {
+            "queue_url": "https://sqs.us-east-1.amazonaws.com/123456789012/test-queue",
+            "region": "us-east-1",
+        }
+        assert project_config["overrides"] == {"region": "us-west-2"}
+        assert "secret_key" not in project_config["effectiveConfig"]
+        assert "access_key" not in project_config["effectiveConfig"]
+        assert "AKIA_MEMBER_SECRET" not in response.content.decode()
+        assert "member_secret_key" not in response.content.decode()
+        assert "member_override_secret" not in response.content.decode()
+
+    def test_get_returns_secrets_for_org_write(self) -> None:
+        data_forwarder = self.create_data_forwarder(
+            provider=DataForwarderProviderSlug.SQS,
+            config={
+                "queue_url": "https://sqs.us-east-1.amazonaws.com/123456789012/test-queue",
+                "region": "us-east-1",
+                "access_key": "AKIA_OWNER_SECRET",
+                "secret_key": "owner_secret_key",
+            },
+        )
+        self.create_data_forwarder_project(
+            data_forwarder=data_forwarder,
+            project=self.project,
+            overrides={"secret_key": "owner_override_secret", "region": "us-west-2"},
+        )
+
+        response = self.get_success_response(self.organization.slug)
+        data = response.data[0]
+        project_config = data["projectConfigs"][0]
+
+        assert data["config"]["secret_key"] == "owner_secret_key"
+        assert project_config["effectiveConfig"]["secret_key"] == "owner_override_secret"
+
     def test_get_multiple_data_forwarders(self) -> None:
         segment_forwarder = self.create_data_forwarder(
             provider=DataForwarderProviderSlug.SEGMENT,

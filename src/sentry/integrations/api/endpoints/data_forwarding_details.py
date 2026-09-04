@@ -22,6 +22,9 @@ from sentry.apidocs.examples.integration_examples import IntegrationExamples
 from sentry.apidocs.parameters import DataForwarderParams, GlobalParams
 from sentry.apidocs.utils import inline_sentry_response_serializer
 from sentry.integrations.api.serializers.models.data_forwarder import DataForwarderResponse
+from sentry.integrations.api.serializers.models.data_forwarder import (
+    DataForwarderSerializer as DataForwarderModelSerializer,
+)
 from sentry.integrations.api.serializers.rest_framework.data_forwarder import (
     DataForwarderProjectSerializer,
     DataForwarderSerializer,
@@ -119,7 +122,13 @@ class DataForwardingDetailsEndpoint(OrganizationEndpoint):
         if serializer.is_valid():
             data_forwarder = serializer.save()
             return Response(
-                serialize(data_forwarder, request.user),
+                serialize(
+                    data_forwarder,
+                    request.user,
+                    DataForwarderModelSerializer(
+                        mask_secrets=not request.access.has_scope("org:write")
+                    ),
+                ),
                 status=status.HTTP_200_OK,
             )
         # Validation failed - return None to signal caller ddto try other operations
@@ -236,7 +245,13 @@ class DataForwardingDetailsEndpoint(OrganizationEndpoint):
             ).update(is_enabled=False)
 
         return Response(
-            serialize(data_forwarder, request.user),
+            serialize(
+                data_forwarder,
+                request.user,
+                DataForwarderModelSerializer(
+                    mask_secrets=not request.access.has_scope("org:write")
+                ),
+            ),
             status=status.HTTP_200_OK,
         )
 
@@ -282,7 +297,13 @@ class DataForwardingDetailsEndpoint(OrganizationEndpoint):
         if serializer.is_valid():
             serializer.save()
             return Response(
-                serialize(data_forwarder, request.user),
+                serialize(
+                    data_forwarder,
+                    request.user,
+                    DataForwarderModelSerializer(
+                        mask_secrets=not request.access.has_scope("org:write")
+                    ),
+                ),
                 status=status.HTTP_200_OK,
             )
 
