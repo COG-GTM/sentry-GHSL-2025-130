@@ -200,8 +200,6 @@ class ApiInviteHelper:
 
     @property
     def member_already_exists(self) -> bool:
-        if not self.user_authenticated:
-            return False
         return (
             self.invite_context.user_id is not None
             and self.invite_context.user_id == self.request.user.id
