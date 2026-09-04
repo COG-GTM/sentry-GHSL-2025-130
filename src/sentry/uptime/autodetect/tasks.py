@@ -1,16 +1,18 @@
 import datetime
 import logging
 from datetime import timedelta
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 from dateutil.parser import parse as parse_datetime
 from django.utils import timezone
 
 from sentry import features, options
+from sentry.http import safe_urlopen
 from sentry.locks import locks
 from sentry.models.organization import Organization
 from sentry.models.project import Project
+from sentry.net.socket import is_valid_url
 from sentry.tasks.base import instrumented_task
 from sentry.taskworker.namespaces import uptime_tasks
 from sentry.uptime.autodetect.ranking import (
@@ -46,6 +48,7 @@ URL_MIN_PERCENT = 0.05
 ONBOARDING_SUBSCRIPTION_INTERVAL_SECONDS = int(timedelta(minutes=60).total_seconds())
 # Default timeout for auto-detected uptime monitors
 ONBOARDING_SUBSCRIPTION_TIMEOUT_MS = 10_000
+ROBOTS_TXT_TIMEOUT_SECONDS = 10
 
 logger = logging.getLogger("sentry.uptime-url-autodetection")
 
@@ -285,6 +288,26 @@ def check_url_robots_txt(url: str) -> bool:
 
 
 def get_robots_txt_parser(url: str) -> RobotFileParser:
-    robot_parser = RobotFileParser(url=urljoin(url, "robots.txt"))
-    robot_parser.read()
+    robots_url = urljoin(url, "robots.txt")
+    robot_parser = RobotFileParser(url=robots_url)
+
+    if urlparse(robots_url).scheme not in ("http", "https") or not is_valid_url(robots_url):
+        robot_parser.disallow_all = True
+        return robot_parser
+
+    response = safe_urlopen(
+        robots_url,
+        method="GET",
+        headers={"User-Agent": UPTIME_USER_AGENT},
+        allow_redirects=False,
+        timeout=ROBOTS_TXT_TIMEOUT_SECONDS,
+    )
+    if response.status_code in (401, 403):
+        robot_parser.disallow_all = True
+    elif 400 <= response.status_code < 500:
+        robot_parser.allow_all = True
+    elif response.status_code >= 300:
+        raise RuntimeError(f"Unexpected status {response.status_code} fetching robots.txt")
+    else:
+        robot_parser.parse(response.text.splitlines())
     return robot_parser
