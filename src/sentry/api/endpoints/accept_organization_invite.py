@@ -245,19 +245,19 @@ class AcceptOrganizationInvite(Endpoint):
                 status=status.HTTP_400_BAD_REQUEST,
                 data={"details": "unable to accept organization invite"},
             )
-        elif helper.member_already_exists:
-            response = Response(
+        if helper.member_already_exists:
+            helper.remove_redundant_invite()
+            remove_invite_details_from_session(request)
+            return Response(
                 status=status.HTTP_400_BAD_REQUEST, data={"details": "member already exists"}
             )
-        elif not request.user.is_authenticated or not helper.valid_request:
+
+        if not helper.valid_request:
             return Response(
                 status=status.HTTP_400_BAD_REQUEST,
                 data={"details": "unable to accept organization invite"},
             )
-        else:
-            response = Response(status=status.HTTP_204_NO_CONTENT)
 
         helper.accept_invite(request.user)
         remove_invite_details_from_session(request)
-
-        return response
+        return Response(status=status.HTTP_204_NO_CONTENT)

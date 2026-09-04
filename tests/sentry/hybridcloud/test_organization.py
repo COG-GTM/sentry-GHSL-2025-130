@@ -300,6 +300,24 @@ def test_update_organization_member() -> None:
     assert member_query.count() == 1
     assert member_query[0].role == "manager"
 
+    other_org = Factories.create_organization()
+    assert (
+        organization_service.update_organization_member(
+            organization_id=other_org.id,
+            member_id=rpc_member.id,
+            attrs=dict(role="manager"),
+        )
+        is None
+    )
+    assert (
+        organization_service.delete_organization_member(
+            organization_id=other_org.id, organization_member_id=rpc_member.id
+        )
+        is False
+    )
+    member_query = OrganizationMember.objects.all()
+    assert member_query[0].role == "manager"
+
 
 @django_db_all(transaction=True)
 @all_silo_test

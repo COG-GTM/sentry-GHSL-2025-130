@@ -257,6 +257,12 @@ class DatabaseBackedOrganizationService(OrganizationService):
         Query for an organization member by its id and organization
         """
 
+        invited_member: OrganizationMember | None = None
+        if organization_member_id is not None:
+            invited_member = OrganizationMember.objects.filter(
+                organization_id=org.id, id=organization_member_id
+            ).first()
+
         member: OrganizationMember | None = None
         if user_id is not None:
             member = OrganizationMember.objects.filter(
@@ -266,10 +272,8 @@ class DatabaseBackedOrganizationService(OrganizationService):
             member = OrganizationMember.objects.filter(
                 organization_id=org.id, email__iexact=email
             ).first()
-        if member is None and organization_member_id is not None:
-            member = OrganizationMember.objects.filter(
-                organization_id=org.id, id=organization_member_id
-            ).first()
+        if member is None:
+            member = invited_member
 
         if member is None:
             return None
@@ -278,14 +282,17 @@ class DatabaseBackedOrganizationService(OrganizationService):
             user_id=member.user_id,
             organization=serialize_rpc_organization(org),
             member=serialize_member(member),
-            invite_organization_member_id=organization_member_id,
+            invite_organization_member_id=invited_member.id if invited_member else None,
+            invite_organization_member=serialize_member(invited_member) if invited_member else None,
         )
 
     def delete_organization_member(
         self, *, organization_id: int, organization_member_id: int
     ) -> bool:
         try:
-            member = OrganizationMember.objects.get(id=organization_member_id)
+            member = OrganizationMember.objects.get(
+                id=organization_member_id, organization_id=organization_id
+            )
         except OrganizationMember.DoesNotExist:
             return False
         num_deleted, _deleted = member.delete()
@@ -424,7 +431,10 @@ class DatabaseBackedOrganizationService(OrganizationService):
     def update_organization_member(
         self, *, organization_id: int, member_id: int, attrs: OrganizationMemberUpdateArgs
     ) -> RpcOrganizationMember | None:
-        member = OrganizationMember.objects.get(id=member_id)
+        try:
+            member = OrganizationMember.objects.get(id=member_id, organization_id=organization_id)
+        except OrganizationMember.DoesNotExist:
+            return None
         with outbox_context(transaction.atomic(router.db_for_write(OrganizationMember))):
             if len(attrs):
                 for k, v in attrs.items():

@@ -359,6 +359,7 @@ class RpcUserInviteContext(RpcUserOrganizationContext):
     """
 
     invite_organization_member_id: int | None = 0
+    invite_organization_member: RpcOrganizationMember | None = None
 
 
 class RpcRegionUser(RpcModel):

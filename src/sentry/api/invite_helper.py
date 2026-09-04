@@ -178,18 +178,21 @@ class ApiInviteHelper:
         assert self.invite_context.member
         return self.invite_context.member.invite_approved
 
+    def _token_matches(self, member: RpcOrganizationMember) -> bool:
+        if self.token is None or member.token_expired:
+            return False
+        return constant_time_compare(member.token or member.legacy_token, self.token)
+
     @property
     def valid_token(self) -> bool:
-        if self.token is None:
-            return False
         assert self.invite_context.member
-        if self.invite_context.member.token_expired:
-            return False
-        tokens_are_equal = constant_time_compare(
-            self.invite_context.member.token or self.invite_context.member.legacy_token,
-            self.token,
-        )
-        return tokens_are_equal
+        return self._token_matches(self.invite_context.member)
+
+    @property
+    def valid_invite_token(self) -> bool:
+        """Whether the request token proves possession of the pending invite named in the request."""
+        invited = self.invite_context.invite_organization_member
+        return invited is not None and invited.is_pending and self._token_matches(invited)
 
     @property
     def user_authenticated(self) -> bool:
@@ -197,9 +200,10 @@ class ApiInviteHelper:
 
     @property
     def member_already_exists(self) -> bool:
-        if not self.user_authenticated:
-            return False
-        return self.invite_context.user_id is not None
+        return (
+            self.invite_context.user_id is not None
+            and self.invite_context.user_id == self.request.user.id
+        )
 
     @property
     def valid_request(self) -> bool:
@@ -211,17 +215,26 @@ class ApiInviteHelper:
             and not any(self.get_onboarding_steps().values())
         )
 
+    def remove_redundant_invite(self) -> None:
+        """
+        A user who is already a member may still hold a pending invite for the same organization.
+        Delete it only when the request proves possession of that invite's token.
+        """
+        self.handle_member_already_exists()
+        invited = self.invite_context.invite_organization_member
+        if invited is None or not self.valid_invite_token:
+            return
+        organization_service.delete_organization_member(
+            organization_member_id=invited.id,
+            organization_id=self.invite_context.organization.id,
+        )
+
     def accept_invite(self, user: User | AnonymousUser) -> RpcOrganizationMember | None:
         member = self.invite_context.member
         assert member
 
         if self.member_already_exists:
-            self.handle_member_already_exists()
-            if self.invite_context.invite_organization_member_id is not None:
-                organization_service.delete_organization_member(
-                    organization_member_id=self.invite_context.invite_organization_member_id,
-                    organization_id=self.invite_context.organization.id,
-                )
+            self.remove_redundant_invite()
             return None
 
         try:
