@@ -696,6 +696,96 @@ class TestWorkflowValidatorUpdate(TestCase):
         assert action_condition_group.action.id != new_action.id
         assert action_condition_group.action.type == Action.Type.SLACK
 
+    def test_update__hack_attempt_to_override_other_org_action_filter(
+        self, mock_action_validator: mock.MagicMock
+    ) -> None:
+        other_org = self.create_organization()
+        other_dcg = self.create_data_condition_group(organization=other_org, logic_type="any")
+
+        self.valid_saved_data["actionFilters"].append(
+            {
+                "id": str(other_dcg.id),
+                "actions": [],
+                "logicType": "all",
+                "conditions": [],
+            }
+        )
+
+        validator = WorkflowValidator(data=self.valid_saved_data, context=self.context)
+        assert validator.is_valid() is True
+
+        with pytest.raises(ValidationError):
+            validator.update(self.workflow, validator.validated_data)
+
+        other_dcg.refresh_from_db()
+        assert other_dcg.logic_type == "any"
+
+    def test_update__hack_attempt_to_override_unrelated_action_filter(
+        self, mock_action_validator: mock.MagicMock
+    ) -> None:
+        other_workflow = self.create_workflow(organization=self.organization)
+        other_dcg = self.create_data_condition_group(
+            organization=self.organization, logic_type="any"
+        )
+        self.create_workflow_data_condition_group(
+            workflow=other_workflow, condition_group=other_dcg
+        )
+
+        self.valid_saved_data["actionFilters"].append(
+            {
+                "id": str(other_dcg.id),
+                "actions": [],
+                "logicType": "all",
+                "conditions": [],
+            }
+        )
+
+        validator = WorkflowValidator(data=self.valid_saved_data, context=self.context)
+        assert validator.is_valid() is True
+
+        with pytest.raises(ValidationError):
+            validator.update(self.workflow, validator.validated_data)
+
+        other_dcg.refresh_from_db()
+        assert other_dcg.logic_type == "any"
+
+    def test_update__hack_attempt_to_override_other_org_action(
+        self, mock_action_validator: mock.MagicMock
+    ) -> None:
+        other_org = self.create_organization()
+        other_dcg = self.create_data_condition_group(organization=other_org, logic_type="any")
+        other_action = self.create_action(
+            type=Action.Type.SLACK,
+            config={
+                "target_identifier": "victim",
+                "target_display": "victim",
+                "target_type": ActionTarget.SPECIFIC,
+            },
+        )
+        self.create_data_condition_group_action(action=other_action, condition_group=other_dcg)
+
+        self.valid_saved_data["actionFilters"][0]["actions"] = [
+            {
+                "id": other_action.id,
+                "type": Action.Type.EMAIL,
+                "config": {
+                    "targetIdentifier": str(self.user.id),
+                    "targetType": "user",
+                },
+                "data": {},
+            }
+        ]
+
+        validator = WorkflowValidator(data=self.valid_saved_data, context=self.context)
+        assert validator.is_valid() is True
+
+        with pytest.raises(ValidationError):
+            validator.update(self.workflow, validator.validated_data)
+
+        other_action.refresh_from_db()
+        assert other_action.type == Action.Type.SLACK
+        assert other_dcg.dataconditiongroupaction_set.count() == 1
+
     def test_update__remove_all_actions(self, mock_action_validator: mock.MagicMock) -> None:
         self.valid_saved_data["actionFilters"][0]["actions"] = []
         validator = WorkflowValidator(data=self.valid_saved_data, context=self.context)
