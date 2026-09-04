@@ -16,6 +16,7 @@ from sentry.demo_mode.utils import is_demo_user
 
 logger = logging.getLogger("sentry.api")
 SETUP_WIZARD_CACHE_KEY = "setup-wizard-keys:v1:"
+SETUP_WIZARD_OWNER_CACHE_KEY = "setup-wizard-owner:v1:"
 SETUP_WIZARD_CACHE_TIMEOUT = 600
 
 
@@ -35,6 +36,7 @@ class SetupWizard(Endpoint):
         if wizard_hash is not None:
             key = f"{SETUP_WIZARD_CACHE_KEY}{wizard_hash}"
             default_cache.delete(key)
+            default_cache.delete(f"{SETUP_WIZARD_OWNER_CACHE_KEY}{wizard_hash}")
             return Response(status=200)
         return None
 
