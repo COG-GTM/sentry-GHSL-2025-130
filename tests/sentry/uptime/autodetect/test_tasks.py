@@ -6,6 +6,7 @@ from unittest import mock
 from unittest.mock import call
 from urllib.robotparser import RobotFileParser
 
+import pytest
 from django.utils import timezone
 
 from sentry.deletions.tasks.scheduled import run_scheduled_deletions
@@ -24,7 +25,10 @@ from sentry.uptime.autodetect.ranking import (
 from sentry.uptime.autodetect.tasks import (
     LAST_PROCESSED_KEY,
     ONBOARDING_SUBSCRIPTION_INTERVAL_SECONDS,
+    ROBOTS_TXT_TIMEOUT_SECONDS,
     SCHEDULER_LOCK_KEY,
+    UPTIME_USER_AGENT,
+    get_robots_txt_parser,
     is_failed_url,
     monitor_url_for_project,
     process_autodetection_bucket,
@@ -344,6 +348,74 @@ class ProcessCandidateUrlTest(UptimeTestCase):
             side_effect=Exception("Robots.txt fetch failed"),
         ):
             assert process_candidate_url(self.project, 100, url, 50)
+
+
+class TestGetRobotsTxtParser(UptimeTestCase):
+    def test_fetches_via_safe_urlopen(self) -> None:
+        response = mock.Mock(status_code=200, text="User-agent: *\nDisallow: /private")
+        with (
+            mock.patch("sentry.uptime.autodetect.tasks.is_valid_url", return_value=True),
+            mock.patch(
+                "sentry.uptime.autodetect.tasks.safe_urlopen", return_value=response
+            ) as safe_urlopen,
+        ):
+            parser = get_robots_txt_parser("https://example.com")
+
+        safe_urlopen.assert_called_once_with(
+            "https://example.com/robots.txt",
+            method="GET",
+            headers={"User-Agent": UPTIME_USER_AGENT},
+            allow_redirects=False,
+            timeout=ROBOTS_TXT_TIMEOUT_SECONDS,
+        )
+        assert parser.can_fetch(UPTIME_USER_AGENT, "https://example.com/") is True
+        assert parser.can_fetch(UPTIME_USER_AGENT, "https://example.com/private") is False
+
+    def test_unsafe_hostname_disallows(self) -> None:
+        with (
+            mock.patch("sentry.uptime.autodetect.tasks.is_valid_url", return_value=False),
+            mock.patch("sentry.uptime.autodetect.tasks.safe_urlopen") as safe_urlopen,
+        ):
+            parser = get_robots_txt_parser("https://example.com")
+
+        safe_urlopen.assert_not_called()
+        assert parser.can_fetch(UPTIME_USER_AGENT, "https://example.com/") is False
+
+    def test_non_http_scheme_disallows(self) -> None:
+        with mock.patch("sentry.uptime.autodetect.tasks.safe_urlopen") as safe_urlopen:
+            parser = get_robots_txt_parser("ftp://example.com/x")
+
+        safe_urlopen.assert_not_called()
+        assert parser.can_fetch(UPTIME_USER_AGENT, "ftp://example.com/") is False
+
+    def test_forbidden_disallows(self) -> None:
+        response = mock.Mock(status_code=403)
+        with (
+            mock.patch("sentry.uptime.autodetect.tasks.is_valid_url", return_value=True),
+            mock.patch("sentry.uptime.autodetect.tasks.safe_urlopen", return_value=response),
+        ):
+            parser = get_robots_txt_parser("https://example.com")
+
+        assert parser.can_fetch(UPTIME_USER_AGENT, "https://example.com/") is False
+
+    def test_not_found_allows(self) -> None:
+        response = mock.Mock(status_code=404)
+        with (
+            mock.patch("sentry.uptime.autodetect.tasks.is_valid_url", return_value=True),
+            mock.patch("sentry.uptime.autodetect.tasks.safe_urlopen", return_value=response),
+        ):
+            parser = get_robots_txt_parser("https://example.com")
+
+        assert parser.can_fetch(UPTIME_USER_AGENT, "https://example.com/") is True
+
+    def test_redirect_raises(self) -> None:
+        response = mock.Mock(status_code=302)
+        with (
+            mock.patch("sentry.uptime.autodetect.tasks.is_valid_url", return_value=True),
+            mock.patch("sentry.uptime.autodetect.tasks.safe_urlopen", return_value=response),
+            pytest.raises(RuntimeError, match="Unexpected status 302 fetching robots.txt"),
+        ):
+            get_robots_txt_parser("https://example.com")
 
 
 class TestFailedUrl(UptimeTestCase):
