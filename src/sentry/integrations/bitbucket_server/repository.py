@@ -94,7 +94,7 @@ class BitbucketServerRepositoryProvider(IntegrationRepositoryProvider):
             duration=10,
             name="bitbucket_server_webhook_secret",
         )
-        with lock.acquire():
+        with lock.blocking_acquire(initial_delay=0.1, timeout=10):
             integration = integration_service.get_integration(integration_id=integration_id)
             metadata = integration.metadata if integration else installation.model.metadata
             secret = metadata.get("webhook_secret")
