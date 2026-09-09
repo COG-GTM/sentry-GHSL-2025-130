@@ -91,9 +91,10 @@ class BitbucketServerRepositoryProvider(IntegrationRepositoryProvider):
 
         lock = locks.get(
             f"bitbucket_server:webhook_secret:{integration_id}",
-            duration=10,
+            duration=30,
             name="bitbucket_server_webhook_secret",
         )
+        # Wait shorter than the lease so a waiter can never enter while the holder is still active.
         with lock.blocking_acquire(initial_delay=0.1, timeout=10):
             integration = integration_service.get_integration(integration_id=integration_id)
             metadata = integration.metadata if integration else installation.model.metadata
