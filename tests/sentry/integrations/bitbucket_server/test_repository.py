@@ -2,6 +2,7 @@ import datetime
 from datetime import timezone
 from functools import cached_property
 
+import orjson
 import pytest
 import responses
 
@@ -33,7 +34,11 @@ class BitbucketServerRepositoryProviderTest(APITestCase):
             integration = self.create_provider_integration(
                 provider="bitbucket_server",
                 name="Example Bitbucket",
-                metadata={"verify_ssl": False, "base_url": "https://bitbucket.example.com"},
+                metadata={
+                    "verify_ssl": False,
+                    "base_url": "https://bitbucket.example.com",
+                    "webhook_secret": "webhook-secret",
+                },
             )
             identity_provider = self.create_identity_provider(
                 external_id="bitbucket.example.com:sentry-test", type="bitbucket_server"
@@ -238,6 +243,8 @@ class BitbucketServerRepositoryProviderTest(APITestCase):
                 "webhook_id": webhook_id,
             },
         }
+        hook_request = orjson.loads(responses.calls[-1].request.body)
+        assert hook_request["configuration"] == {"secret": "webhook-secret"}
 
     def test_repository_external_slug(self) -> None:
         repo = Repository.objects.create(

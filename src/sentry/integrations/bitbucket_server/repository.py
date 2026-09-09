@@ -4,7 +4,10 @@ from typing import Any
 from django.core.cache import cache
 from django.urls import reverse
 
+from sentry import locks
+from sentry.integrations.services.integration.service import integration_service
 from sentry.integrations.types import IntegrationProviderSlug
+from sentry.models.apitoken import generate_token
 from sentry.organizations.services.organization.model import RpcOrganization
 from sentry.plugins.providers.integration_repository import (
     IntegrationRepositoryProvider,
@@ -39,6 +42,7 @@ class BitbucketServerRepositoryProvider(IntegrationRepositoryProvider):
     ) -> RepositoryConfig:
         installation = self.get_installation(data.get("installation"), organization.id)
         client = installation.get_client()
+        secret = self.get_webhook_secret(installation)
 
         try:
             resp = client.create_hook(
@@ -57,6 +61,7 @@ class BitbucketServerRepositoryProvider(IntegrationRepositoryProvider):
                     ),
                     "active": True,
                     "events": ["repo:refs_changed", "pr:merged"],
+                    "configuration": {"secret": secret},
                 },
             )
         except Exception as e:
@@ -77,6 +82,31 @@ class BitbucketServerRepositoryProvider(IntegrationRepositoryProvider):
                 },
                 "integration_id": data["installation"],
             }
+
+    def get_webhook_secret(self, installation) -> str:
+        integration_id = installation.model.id
+        secret = installation.model.metadata.get("webhook_secret")
+        if secret:
+            return secret
+
+        lock = locks.get(
+            f"bitbucket_server:webhook_secret:{integration_id}",
+            duration=30,
+            name="bitbucket_server_webhook_secret",
+        )
+        # Wait shorter than the lease so a waiter can never enter while the holder is still active.
+        with lock.blocking_acquire(initial_delay=0.1, timeout=10):
+            integration = integration_service.get_integration(integration_id=integration_id)
+            metadata = integration.metadata if integration else installation.model.metadata
+            secret = metadata.get("webhook_secret")
+            if not secret:
+                secret = generate_token()
+                integration_service.update_integration(
+                    integration_id=integration_id,
+                    metadata={**metadata, "webhook_secret": secret},
+                )
+        installation.model.metadata["webhook_secret"] = secret
+        return secret
 
     def on_delete_repository(self, repo):
         installation = self.get_installation(repo.integration_id, repo.organization_id)

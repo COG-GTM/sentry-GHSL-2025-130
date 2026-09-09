@@ -34,6 +34,7 @@ from sentry.integrations.utils.metrics import (
     IntegrationPipelineViewEvent,
     IntegrationPipelineViewType,
 )
+from sentry.models.apitoken import generate_token
 from sentry.models.repository import Repository
 from sentry.organizations.services.organization.model import RpcOrganization
 from sentry.pipeline.views.base import PipelineView
@@ -435,6 +436,7 @@ class BitbucketServerIntegrationProvider(IntegrationProvider):
                 "base_url": install["url"],
                 "domain_name": hostname,
                 "verify_ssl": install["verify_ssl"],
+                "webhook_secret": generate_token(),
             },
             "user_identity": {
                 "type": self.key,

@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import logging
 from abc import ABC
 from collections.abc import Mapping
@@ -18,6 +20,7 @@ from sentry.api.base import Endpoint
 from sentry.api.exceptions import BadRequest
 from sentry.integrations.base import IntegrationDomain
 from sentry.integrations.models.integration import Integration
+from sentry.integrations.services.integration.service import integration_service
 from sentry.integrations.source_code_management.webhook import SCMWebhook
 from sentry.integrations.types import IntegrationProviderSlug
 from sentry.integrations.utils.metrics import IntegrationWebhookEvent, IntegrationWebhookEventType
@@ -32,6 +35,13 @@ from sentry.web.frontend.base import region_silo_view
 logger = logging.getLogger("sentry.webhooks")
 
 PROVIDER_NAME = "integrations:bitbucket_server"
+
+
+def is_valid_signature(body: bytes, secret: str, signature: str) -> bool:
+    expected_signature = hmac.new(
+        secret.encode("utf-8"), msg=body, digestmod=hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected_signature, signature)
 
 
 class BitbucketServerWebhook(SCMWebhook, ABC):
@@ -185,6 +195,9 @@ class BitbucketServerWebhookEndpoint(Endpoint):
             )
             return HttpResponse(status=400)
 
+        if not self._verify_signature(request, body, organization, integration_id):
+            return HttpResponse(status=401)
+
         try:
             handler = self.get_handler(request.META["HTTP_X_EVENT_KEY"])
         except KeyError:
@@ -213,3 +226,38 @@ class BitbucketServerWebhookEndpoint(Endpoint):
         event_handler(event, organization=organization, integration_id=integration_id)
 
         return HttpResponse(status=204)
+
+    def _verify_signature(
+        self, request: HttpRequest, body: bytes, organization: Organization, integration_id
+    ) -> bool:
+        log_extra = {"organization_id": organization.id, "integration_id": integration_id}
+
+        integration = integration_service.get_integration(
+            integration_id=integration_id,
+            organization_id=organization.id,
+            provider=IntegrationProviderSlug.BITBUCKET_SERVER.value,
+        )
+        if integration is None:
+            logger.info("%s.webhook.invalid-integration", PROVIDER_NAME, extra=log_extra)
+            return False
+
+        secret = integration.metadata.get("webhook_secret")
+        if not secret:
+            logger.error("%s.webhook.missing-secret", PROVIDER_NAME, extra=log_extra)
+            return False
+
+        try:
+            method, signature = request.META["HTTP_X_HUB_SIGNATURE"].split("=", 1)
+        except (KeyError, ValueError):
+            logger.info("%s.webhook.missing-signature", PROVIDER_NAME, extra=log_extra)
+            return False
+
+        if method != "sha256":
+            logger.info("%s.webhook.unsupported-signature-method", PROVIDER_NAME, extra=log_extra)
+            return False
+
+        if not is_valid_signature(body, secret, signature):
+            logger.info("%s.webhook.invalid-signature", PROVIDER_NAME, extra=log_extra)
+            return False
+
+        return True
