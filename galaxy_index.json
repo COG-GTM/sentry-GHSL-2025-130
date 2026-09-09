@@ -1,0 +1,657 @@
+{
+  "repo": "COG-GTM/sentry-GHSL-2025-130",
+  "nodes": [
+    {
+      "id": "api-request-authorization",
+      "name": "API Request Authorization",
+      "parent": null,
+      "description": "Everything that decides whether an HTTP request may touch a resource: DRF permission classes, endpoint base classes that resolve org/project scope, and the scope/role checks behind them. Nearly every IDOR or privilege-escalation bug in Sentry lands somewhere in this concern.",
+      "files": ["src/sentry/api/base.py", "src/sentry/api/permissions.py"]
+    },
+    {
+      "id": "permission-classes",
+      "name": "DRF Permission Classes",
+      "parent": "api-request-authorization",
+      "description": "Central definitions of SentryPermission, SuperuserPermission, StaffPermission and scope maps used by endpoints. A permission class that omits a method or maps to a weak scope silently opens the endpoint.",
+      "files": ["src/sentry/api/permissions.py"],
+      "lines": {"src/sentry/api/permissions.py": "1-140"}
+    },
+    {
+      "id": "endpoint-bases",
+      "name": "Organization & Project Endpoint Bases",
+      "parent": "api-request-authorization",
+      "description": "Base classes that convert URL slugs into Organization/Project objects and apply the permission checks plus get_projects() filtering. Bypassing these bases is the usual root cause of cross-tenant reads.",
+      "files": ["src/sentry/api/bases/organization.py", "src/sentry/api/bases/project.py", "src/sentry/api/bases/organizationmember.py"]
+    },
+    {
+      "id": "api-authentication",
+      "name": "API Authentication Backends",
+      "parent": "api-request-authorization",
+      "description": "Token, DSN, RPC-signature and session authenticators that populate request.auth before permissions run.",
+      "files": ["src/sentry/api/authentication.py", "src/sentry/models/apitoken.py"]
+    },
+    {
+      "id": "access-and-scopes",
+      "name": "Access Objects & Scopes",
+      "parent": "api-request-authorization",
+      "description": "Builds the per-request Access object from org membership, team roles and SSO state; the source of truth for scope checks used by permission classes.",
+      "files": ["src/sentry/auth/access.py", "src/sentry/roles/manager.py"]
+    },
+    {
+      "id": "elevated-privileges",
+      "name": "Superuser & Staff Elevation",
+      "parent": "api-request-authorization",
+      "description": "Superuser/staff session elevation, sudo re-authentication and the elevated-mode abstraction guarding internal endpoints.",
+      "files": ["src/sentry/auth/superuser.py", "src/sentry/auth/staff.py", "src/sentry/auth/elevated_mode.py", "src/sentry/middleware/sudo.py"]
+    },
+    {
+      "id": "api-rate-limiting",
+      "name": "API Rate Limiting",
+      "parent": "api-request-authorization",
+      "description": "Per-endpoint rate limit configuration enforced by middleware over Redis, protecting enumeration-prone endpoints such as member invite and missing-member listings.",
+      "files": ["src/sentry/ratelimits/config.py", "src/sentry/ratelimits/redis.py", "src/sentry/middleware/ratelimit.py"]
+    },
+    {
+      "id": "api-url-routing",
+      "name": "API URL Routing",
+      "parent": "api-request-authorization",
+      "description": "The single urlconf mapping every /api/0/ route to an endpoint class; the authoritative map from external path to code.",
+      "files": ["src/sentry/api/urls.py"]
+    },
+    {
+      "id": "authentication-and-identity",
+      "name": "Authentication & Identity",
+      "parent": null,
+      "description": "User login, SSO/OAuth identity linking and the request middleware that establishes who the caller is before authorization runs.",
+      "files": ["src/sentry/auth/helper.py", "src/sentry/middleware/auth.py"]
+    },
+    {
+      "id": "sso-providers",
+      "name": "SSO / OAuth Providers",
+      "parent": "authentication-and-identity",
+      "description": "Provider implementations (OAuth2, GitHub, Google, SAML2) plugging into the auth pipeline to establish external identities.",
+      "files": ["src/sentry/auth/providers/oauth2.py", "src/sentry/auth/providers/github/provider.py", "src/sentry/auth/providers/saml2/provider.py"]
+    },
+    {
+      "id": "auth-pipeline",
+      "name": "Auth Pipeline & Identity Linking",
+      "parent": "authentication-and-identity",
+      "description": "AuthHelper state machine that turns a provider callback into a linked Sentry user and org membership, including invite acceptance paths.",
+      "files": ["src/sentry/auth/helper.py", "src/sentry/api/invite_helper.py"]
+    },
+    {
+      "id": "request-middleware-stack",
+      "name": "Request Middleware Stack",
+      "parent": "authentication-and-identity",
+      "description": "Session/auth, customer-domain resolution and security headers applied to every request before it reaches a view.",
+      "files": ["src/sentry/middleware/auth.py", "src/sentry/middleware/customer_domain.py", "src/sentry/middleware/security.py"]
+    },
+    {
+      "id": "self-hosted-configuration",
+      "name": "Self-hosted Configuration Loading",
+      "parent": null,
+      "description": "How a self-hosted Sentry boots: discovering ~/.sentry/sentry.conf.py, exec'ing it into a settings module and layering it over sentry.conf.server. Anything that can write to these files becomes remote code execution at next boot.",
+      "files": ["src/sentry/runner/importer.py", "src/sentry/runner/settings.py", "src/sentry/conf/server.py"]
+    },
+    {
+      "id": "settings-importer",
+      "name": "Settings Importer (exec of sentry.conf.py)",
+      "parent": "self-hosted-configuration",
+      "description": "populate_module()/_load_settings() read the user config file and exec its bytes into a module namespace, then copy uppercase names onto Django settings.",
+      "files": ["src/sentry/runner/importer.py"],
+      "lines": {"src/sentry/runner/importer.py": "10-33"}
+    },
+    {
+      "id": "config-discovery",
+      "name": "Config Discovery & configure()",
+      "parent": "self-hosted-configuration",
+      "description": "discover_configs() locates the config directory, sentry.conf.py and config.yml; configure() re-initialises the process against them.",
+      "files": ["src/sentry/runner/settings.py", "src/sentry/runner/initializer.py"]
+    },
+    {
+      "id": "django-server-settings",
+      "name": "Django Server Settings Defaults",
+      "parent": "self-hosted-configuration",
+      "description": "sentry.conf.server holds the default Django settings, middleware order, installed apps and SENTRY_EARLY_FEATURES that user config overrides.",
+      "files": ["src/sentry/conf/server.py", "src/sentry/conf/urls.py"]
+    },
+    {
+      "id": "self-hosted-deployment",
+      "name": "Self-hosted Deployment Artifacts",
+      "parent": "self-hosted-configuration",
+      "description": "Docker image and shipped sentry.conf.py used by the self-hosted distribution; defines the on-disk config that the importer later exec's.",
+      "files": ["self-hosted/sentry.conf.py", "self-hosted/Dockerfile", "self-hosted/docker-entrypoint.sh"]
+    },
+    {
+      "id": "internal-feature-flags-endpoint",
+      "name": "Internal Feature Flags Endpoint",
+      "parent": "self-hosted-configuration",
+      "description": "Superuser-only self-hosted endpoint whose PUT rewrites lines of the on-disk sentry.conf.py from request data and then re-runs configure(). Directly bridges HTTP input into the exec'd config file.",
+      "files": ["src/sentry/api/endpoints/internal/feature_flags.py"],
+      "lines": {"src/sentry/api/endpoints/internal/feature_flags.py": "35-71"}
+    },
+    {
+      "id": "runtime-options",
+      "name": "Runtime Options Store",
+      "parent": "self-hosted-configuration",
+      "description": "Registered options with defaults, persisted in the DB/cache and mutable at runtime; a second configuration surface alongside Django settings.",
+      "files": ["src/sentry/options/manager.py", "src/sentry/options/defaults.py", "src/sentry/options/store.py"]
+    },
+    {
+      "id": "system-options-endpoint",
+      "name": "System Options Endpoint",
+      "parent": "self-hosted-configuration",
+      "description": "GET/PUT of registered system options over the API, gated on superuser and option flags; a privileged write path into global runtime behaviour.",
+      "files": ["src/sentry/api/endpoints/system_options.py"]
+    },
+    {
+      "id": "ingest-pipeline",
+      "name": "Ingest Pipeline",
+      "parent": null,
+      "description": "Path an event takes from Relay through Kafka consumers into normalization, filtering, storage and post-processing. Handles fully untrusted attacker-controlled payloads.",
+      "files": ["src/sentry/ingest/consumer/processors.py", "src/sentry/event_manager.py"]
+    },
+    {
+      "id": "relay-project-config",
+      "name": "Relay Project Config",
+      "parent": "ingest-pipeline",
+      "description": "Builds the ProjectConfig blob (filters, sampling, PII rules) that Relay enforces at the edge, plus its cache and debounce layers.",
+      "files": ["src/sentry/relay/config/__init__.py", "src/sentry/relay/globalconfig.py", "src/sentry/tasks/relay.py"]
+    },
+    {
+      "id": "pii-scrubbing",
+      "name": "PII Scrubbing Rules",
+      "parent": "ingest-pipeline",
+      "description": "Datascrubbing configuration converted into Relay PII rules, deciding which sensitive fields never get stored.",
+      "files": ["src/sentry/relay/datascrubbing.py"]
+    },
+    {
+      "id": "inbound-filters",
+      "name": "Inbound Filters",
+      "parent": "ingest-pipeline",
+      "description": "Per-project filters (legacy browsers, localhost, error message patterns) applied to incoming events.",
+      "files": ["src/sentry/ingest/inbound_filters.py"]
+    },
+    {
+      "id": "event-manager",
+      "name": "Event Manager & Grouping",
+      "parent": "ingest-pipeline",
+      "description": "Normalizes saved events, computes hashes/fingerprints, creates or updates Groups and writes the payload to nodestore.",
+      "files": ["src/sentry/event_manager.py", "src/sentry/grouping/api.py"]
+    },
+    {
+      "id": "eventstream",
+      "name": "Eventstream to Snuba",
+      "parent": "ingest-pipeline",
+      "description": "Publishes processed events onto Kafka for Snuba/ClickHouse consumption and triggers post-process forwarding.",
+      "files": ["src/sentry/eventstream/kafka/backend.py", "src/sentry/eventstream/snuba.py"]
+    },
+    {
+      "id": "quotas-and-sampling",
+      "name": "Quotas & Dynamic Sampling",
+      "parent": "ingest-pipeline",
+      "description": "Redis-backed quota enforcement and sampling bias rules that limit how much of an org's volume is accepted and retained.",
+      "files": ["src/sentry/quotas/redis.py", "src/sentry/quotas/base.py", "src/sentry/dynamic_sampling/rules/base.py"]
+    },
+    {
+      "id": "storage-and-caching",
+      "name": "Storage, Caching & Buffers",
+      "parent": null,
+      "description": "Backends that persist and cache event bodies, counters and query results: nodestore, Redis buffers, and the Snuba query layer.",
+      "files": ["src/sentry/nodestore/base.py", "src/sentry/buffer/base.py"]
+    },
+    {
+      "id": "nodestore-django-backend",
+      "name": "Nodestore Django Backend",
+      "parent": "storage-and-caching",
+      "description": "Postgres-backed nodestore storing raw event JSON blobs keyed by node id; the default self-hosted blob store.",
+      "files": ["src/sentry/nodestore/django/backend.py", "src/sentry/nodestore/django/models.py"]
+    },
+    {
+      "id": "nodestore-abstraction",
+      "name": "Nodestore Abstraction & Serialization",
+      "parent": "storage-and-caching",
+      "description": "Base nodestore interface handling compression and (de)serialization of stored payloads across bigtable/django/filesystem backends.",
+      "files": ["src/sentry/nodestore/base.py", "src/sentry/nodestore/filesystem/backend.py"]
+    },
+    {
+      "id": "redis-buffer",
+      "name": "Redis Buffer",
+      "parent": "storage-and-caching",
+      "description": "Coalesces high-frequency model increments and pending signals in Redis, then flushes them to Postgres; also backs workflow-engine batching.",
+      "files": ["src/sentry/buffer/redis.py", "src/sentry/buffer/base.py"]
+    },
+    {
+      "id": "snuba-query-layer",
+      "name": "Snuba Query Layer",
+      "parent": "storage-and-caching",
+      "description": "Client that builds and issues SnQL/RPC queries to Snuba for all search, events and trace endpoints.",
+      "files": ["src/sentry/utils/snuba.py", "src/sentry/utils/snuba_rpc.py"]
+    },
+    {
+      "id": "eventstore-reads",
+      "name": "Eventstore Read Path",
+      "parent": "storage-and-caching",
+      "description": "Reads events back by combining Snuba metadata with nodestore bodies to hydrate Event objects for the API and UI.",
+      "files": ["src/sentry/eventstore/base.py", "src/sentry/eventstore/models.py"]
+    },
+    {
+      "id": "task-and-worker-queue",
+      "name": "Task & Worker Queue",
+      "parent": null,
+      "description": "Asynchronous execution: Celery/taskworker registration, routing, retries and the long-running background jobs that operate outside a request's auth context.",
+      "files": ["src/sentry/tasks/base.py", "src/sentry/taskworker/registry.py"]
+    },
+    {
+      "id": "task-base-decorator",
+      "name": "instrumented_task & Task Registry",
+      "parent": "task-and-worker-queue",
+      "description": "Decorator and registry that define queues, retry policy and namespaces for every background task.",
+      "files": ["src/sentry/tasks/base.py", "src/sentry/taskworker/registry.py", "src/sentry/taskworker/namespaces.py"]
+    },
+    {
+      "id": "taskworker-runtime",
+      "name": "Taskworker Runtime",
+      "parent": "task-and-worker-queue",
+      "description": "Worker runtime and router executing registered activations, replacing direct Celery consumption.",
+      "files": ["src/sentry/taskworker/runtime.py", "src/sentry/taskworker/router.py", "src/sentry/taskworker/retry.py"]
+    },
+    {
+      "id": "post-process-tasks",
+      "name": "Post-process & Alerting Tasks",
+      "parent": "task-and-worker-queue",
+      "description": "Runs after an event is stored: rule evaluation, ownership assignment, integrations notifications and workflow engine dispatch.",
+      "files": ["src/sentry/tasks/post_process.py", "src/sentry/tasks/groupowner.py"]
+    },
+    {
+      "id": "buffer-flush-task",
+      "name": "Buffer Flush Task",
+      "parent": "task-and-worker-queue",
+      "description": "Periodic task draining pending Redis buffer keys into the database.",
+      "files": ["src/sentry/tasks/process_buffer.py"]
+    },
+    {
+      "id": "deletion-tasks",
+      "name": "Deletions & Data Lifecycle",
+      "parent": "task-and-worker-queue",
+      "description": "Scheduled cascading deletion of orgs, projects, groups and their event data, plus retention cleanup.",
+      "files": ["src/sentry/deletions/tasks/scheduled.py", "src/sentry/deletions/base.py", "src/sentry/deletions/manager.py"]
+    },
+    {
+      "id": "integrations-and-webhooks",
+      "name": "Integrations & Webhooks",
+      "parent": null,
+      "description": "Third-party providers and the unauthenticated-by-default webhook endpoints they call back into. Webhook handlers must verify signatures/tokens themselves, making them a recurring source of trust bugs.",
+      "files": ["src/sentry/integrations/base.py", "src/sentry/integrations/manager.py"]
+    },
+    {
+      "id": "vercel-webhook",
+      "name": "Vercel Webhook",
+      "parent": "integrations-and-webhooks",
+      "description": "Handles Vercel deployment webhooks, verifying the HMAC signature and mapping payload ids onto Sentry orgs/projects to create releases.",
+      "files": ["src/sentry/integrations/vercel/webhook.py", "src/sentry/integrations/vercel/integration.py"]
+    },
+    {
+      "id": "bitbucket-server-webhook",
+      "name": "Bitbucket Server Webhook",
+      "parent": "integrations-and-webhooks",
+      "description": "Receives push events from self-managed Bitbucket Server, resolving the organization from the URL and writing commits/repositories.",
+      "files": ["src/sentry/integrations/bitbucket_server/webhook.py", "src/sentry/integrations/bitbucket_server/integration.py"]
+    },
+    {
+      "id": "github-webhook",
+      "name": "GitHub Webhook",
+      "parent": "integrations-and-webhooks",
+      "description": "Signature-verified GitHub app webhook handling push, pull request and installation events.",
+      "files": ["src/sentry/integrations/github/webhook.py", "src/sentry/integrations/github/client.py"]
+    },
+    {
+      "id": "slack-webhooks",
+      "name": "Slack Interactivity Webhooks",
+      "parent": "integrations-and-webhooks",
+      "description": "Slack request signing verification plus action/command/event endpoints that mutate issues from chat.",
+      "files": ["src/sentry/integrations/slack/webhooks/base.py", "src/sentry/integrations/slack/requests/base.py"]
+    },
+    {
+      "id": "integration-pipeline",
+      "name": "Integration Install Pipeline",
+      "parent": "integrations-and-webhooks",
+      "description": "Multi-step OAuth/config pipeline that installs an integration into an organization and persists credentials.",
+      "files": ["src/sentry/integrations/pipeline.py", "src/sentry/pipeline/base.py"]
+    },
+    {
+      "id": "integration-http-clients",
+      "name": "Integration HTTP Clients",
+      "parent": "integrations-and-webhooks",
+      "description": "Shared outbound API client base with retries, proxying and credential handling used by every provider client.",
+      "files": ["src/sentry/integrations/client.py", "src/sentry/shared_integrations/client/base.py"]
+    },
+    {
+      "id": "organization-membership",
+      "name": "Organization Membership & Invites",
+      "parent": null,
+      "description": "Endpoints and helpers governing who belongs to an organization: invites, invite approval, role assignment and discovery of unjoined members. Weak scope checks here escalate an outsider into org access.",
+      "files": ["src/sentry/core/endpoints/organization_member_invite/index.py", "src/sentry/api/invite_helper.py"]
+    },
+    {
+      "id": "member-invite-endpoints",
+      "name": "Member Invite Endpoints",
+      "parent": "organization-membership",
+      "description": "List/create/approve/re-invite endpoints for pending organization member invites, including the role and team validation applied to invite requests.",
+      "files": ["src/sentry/core/endpoints/organization_member_invite/index.py", "src/sentry/core/endpoints/organization_member_invite/details.py", "src/sentry/core/endpoints/organization_member_invite/reinvite.py", "src/sentry/core/endpoints/organization_member_invite/utils.py"]
+    },
+    {
+      "id": "missing-org-members",
+      "name": "Missing Org Members Endpoint",
+      "parent": "organization-membership",
+      "description": "Surfaces commit authors who are not yet org members so admins can invite them; exposes email addresses derived from repository commit data.",
+      "files": ["src/sentry/api/endpoints/organization_missing_org_members.py"]
+    },
+    {
+      "id": "member-models-and-roles",
+      "name": "Member Models & Roles",
+      "parent": "organization-membership",
+      "description": "OrganizationMember/OrganizationMemberInvite models and the role hierarchy that maps roles to scopes.",
+      "files": ["src/sentry/models/organizationmember.py", "src/sentry/models/organizationmemberinvite.py", "src/sentry/roles/manager.py"]
+    },
+    {
+      "id": "invite-acceptance",
+      "name": "Invite Acceptance Flow",
+      "parent": "organization-membership",
+      "description": "ApiInviteHelper validating invite tokens, SSO requirements and 2FA before turning an invite into a real membership.",
+      "files": ["src/sentry/api/invite_helper.py", "static/app/views/acceptOrganizationInvite/index.tsx"]
+    },
+    {
+      "id": "conduit-subsystem",
+      "name": "Conduit Subsystem",
+      "parent": null,
+      "description": "Self-contained Conduit module with its own auth helper, demo organization endpoint, background tasks and a frontend story surface. A small, recently added surface that does not reuse the standard endpoint bases everywhere.",
+      "files": ["src/sentry/conduit/__init__.py", "src/sentry/conduit/auth.py"]
+    },
+    {
+      "id": "conduit-demo-endpoint",
+      "name": "Conduit Demo Endpoint",
+      "parent": "conduit-subsystem",
+      "description": "Organization-scoped Conduit demo endpoint exposing conduit operations over the API.",
+      "files": ["src/sentry/conduit/endpoints/organization_conduit_demo.py"]
+    },
+    {
+      "id": "conduit-auth",
+      "name": "Conduit Auth Helper",
+      "parent": "conduit-subsystem",
+      "description": "Conduit-specific credential/permission handling used by its endpoint and tasks instead of the shared permission classes.",
+      "files": ["src/sentry/conduit/auth.py"]
+    },
+    {
+      "id": "conduit-tasks",
+      "name": "Conduit Background Tasks",
+      "parent": "conduit-subsystem",
+      "description": "Async conduit jobs executed off-request through the task queue.",
+      "files": ["src/sentry/conduit/tasks.py"]
+    },
+    {
+      "id": "conduit-frontend",
+      "name": "Conduit Frontend Surface",
+      "parent": "conduit-subsystem",
+      "description": "React story/demo surface rendering conduit data in the app.",
+      "files": ["static/app/views/conduit/conduitDemo.stories.tsx"]
+    },
+    {
+      "id": "uptime-and-crons",
+      "name": "Uptime Monitoring",
+      "parent": null,
+      "description": "Synthetic uptime checks and cron monitors: subscription management, region config production, result consumption and the alert endpoints. Uptime subscriptions accept user-supplied URLs and headers, making SSRF and config-injection relevant.",
+      "files": ["src/sentry/uptime/models.py", "src/sentry/uptime/subscriptions/subscriptions.py"]
+    },
+    {
+      "id": "uptime-subscriptions",
+      "name": "Uptime Subscription Management",
+      "parent": "uptime-and-crons",
+      "description": "Creates, updates and deletes uptime subscriptions, assigns regions and publishes the check configuration to the uptime checker.",
+      "files": ["src/sentry/uptime/subscriptions/subscriptions.py", "src/sentry/uptime/subscriptions/regions.py", "src/sentry/uptime/config_producer.py"]
+    },
+    {
+      "id": "uptime-endpoints",
+      "name": "Uptime API Endpoints",
+      "parent": "uptime-and-crons",
+      "description": "Project/organization endpoints and validators for creating uptime alerts, listing checks and reading stats.",
+      "files": ["src/sentry/uptime/endpoints/project_uptime_alert_details.py", "src/sentry/uptime/endpoints/project_uptime_alert_index.py", "src/sentry/uptime/endpoints/validators.py", "src/sentry/uptime/endpoints/organization_uptime_stats.py"]
+    },
+    {
+      "id": "uptime-results-consumer",
+      "name": "Uptime Results Consumer",
+      "parent": "uptime-and-crons",
+      "description": "Kafka consumer turning checker results into issue occurrences and EAP items.",
+      "files": ["src/sentry/uptime/consumers/results_consumer.py", "src/sentry/uptime/consumers/eap_producer.py"]
+    },
+    {
+      "id": "explore-and-seer",
+      "name": "Trace Explorer & Seer AI",
+      "parent": null,
+      "description": "Query and AI surfaces over event/span data: the organization events family, trace endpoints, and the Seer service endpoints that proxy user text into an external AI service and back into the UI.",
+      "files": ["src/sentry/api/endpoints/organization_events.py", "src/sentry/seer/endpoints/seer_rpc.py"]
+    },
+    {
+      "id": "organization-events-endpoints",
+      "name": "Organization Events Endpoints",
+      "parent": "explore-and-seer",
+      "description": "The organization_events_* family serving arbitrary user query strings (search, stats, facets, timeseries) against Snuba with project-scope filtering.",
+      "files": ["src/sentry/api/endpoints/organization_events.py", "src/sentry/api/endpoints/organization_events_stats.py", "src/sentry/api/endpoints/organization_events_facets.py", "src/sentry/api/endpoints/organization_events_meta.py", "src/sentry/api/bases/organization_events.py"]
+    },
+    {
+      "id": "trace-endpoints",
+      "name": "Trace & Span Endpoints",
+      "parent": "explore-and-seer",
+      "description": "Trace waterfall, trace item attribute and span field endpoints powering the trace explorer UI.",
+      "files": ["src/sentry/api/endpoints/organization_events_trace.py", "src/sentry/api/endpoints/organization_trace.py", "src/sentry/api/endpoints/organization_trace_item_attributes.py", "src/sentry/api/endpoints/organization_spans_fields.py"]
+    },
+    {
+      "id": "seer-trace-explorer-ai",
+      "name": "Seer Trace Explorer AI Endpoints",
+      "parent": "explore-and-seer",
+      "description": "Endpoints translating natural-language prompts into trace explorer queries via Seer, including setup checks and agentic translation.",
+      "files": ["src/sentry/seer/endpoints/trace_explorer_ai_query.py", "src/sentry/seer/endpoints/trace_explorer_ai_setup.py", "src/sentry/seer/endpoints/trace_explorer_ai_translate_agentic.py", "src/sentry/seer/endpoints/organization_trace_summary.py"]
+    },
+    {
+      "id": "seer-rpc",
+      "name": "Seer RPC & Request Signing",
+      "parent": "explore-and-seer",
+      "description": "Signed RPC channel letting the external Seer service call back into Sentry, plus the signature verification used to authenticate it.",
+      "files": ["src/sentry/seer/endpoints/seer_rpc.py", "src/sentry/seer/endpoints/organization_seer_rpc.py", "src/sentry/seer/signed_seer_api.py"]
+    },
+    {
+      "id": "seer-explorer-chat",
+      "name": "Seer Explorer Chat & Autofix",
+      "parent": "explore-and-seer",
+      "description": "Chat-style investigation and autofix endpoints returning model-authored markdown that the frontend renders.",
+      "files": ["src/sentry/seer/endpoints/organization_seer_explorer_chat.py", "src/sentry/seer/endpoints/group_ai_autofix.py", "src/sentry/seer/endpoints/group_ai_summary.py"]
+    },
+    {
+      "id": "hybrid-cloud-silos",
+      "name": "Hybrid Cloud & Silo Routing",
+      "parent": null,
+      "description": "Control/region split: which endpoints run in which silo, how requests are proxied across silos and how writes are replicated. Silo annotations affect what data an endpoint can even reach.",
+      "files": ["src/sentry/hybridcloud/apigateway/proxy.py", "src/sentry/silo/base.py"]
+    },
+    {
+      "id": "api-gateway-proxy",
+      "name": "API Gateway Proxy",
+      "parent": "hybrid-cloud-silos",
+      "description": "Forwards control-silo requests to the correct region silo, rewriting headers and streaming responses.",
+      "files": ["src/sentry/hybridcloud/apigateway/proxy.py", "src/sentry/hybridcloud/apigateway/apigateway.py"]
+    },
+    {
+      "id": "cross-silo-rpc",
+      "name": "Cross-silo RPC",
+      "parent": "hybrid-cloud-silos",
+      "description": "Authenticated RPC service framework used for control<->region calls, with signature-based authentication.",
+      "files": ["src/sentry/hybridcloud/rpc/service.py", "src/sentry/hybridcloud/rpc/sig.py"]
+    },
+    {
+      "id": "outbox-replication",
+      "name": "Outbox Replication",
+      "parent": "hybrid-cloud-silos",
+      "description": "Outbox rows and drain tasks that eventually-consistently replicate model changes across silos.",
+      "files": ["src/sentry/hybridcloud/outbox/base.py", "src/sentry/hybridcloud/models/outbox.py", "src/sentry/hybridcloud/tasks/deliver_webhooks.py"]
+    },
+    {
+      "id": "frontend-rendering-surfaces",
+      "name": "Frontend Rendering Surfaces",
+      "parent": null,
+      "description": "The React application and the specific places where it renders server- or user-supplied content, including components using dangerouslySetInnerHTML or direct innerHTML assignment.",
+      "files": ["static/app/index.tsx", "static/app/main.tsx"]
+    },
+    {
+      "id": "frontend-bootstrap",
+      "name": "Frontend Bootstrap & Config Injection",
+      "parent": "frontend-rendering-surfaces",
+      "description": "Server-rendered client config blob and the bootstrap code that hydrates the SPA with organization/user state.",
+      "files": ["src/sentry/web/client_config.py", "static/app/bootstrap/initializeApp.tsx", "static/app/index.tsx"]
+    },
+    {
+      "id": "frontend-api-client",
+      "name": "Frontend API Client",
+      "parent": "frontend-rendering-surfaces",
+      "description": "Central request client and query hooks that every view uses to talk to /api/0/.",
+      "files": ["static/app/api.tsx", "static/app/utils/queryClient.tsx"]
+    },
+    {
+      "id": "markdown-html-rendering",
+      "name": "Markdown & Raw HTML Rendering",
+      "parent": "frontend-rendering-surfaces",
+      "description": "Marked-based markdown rendering and other components that pass strings into dangerouslySetInnerHTML; the primary DOM-XSS sink cluster in the app.",
+      "files": ["static/app/utils/marked/markedText.tsx", "static/app/components/events/userFeedback.tsx", "static/app/views/organizationContainer.tsx", "static/app/components/serviceIncidentDetails.tsx"]
+    },
+    {
+      "id": "autofix-ui-rendering",
+      "name": "Autofix & Seer UI Rendering",
+      "parent": "frontend-rendering-surfaces",
+      "description": "Autofix and Seer Explorer components rendering model-generated markdown/HTML into the issue details page.",
+      "files": ["static/app/components/events/autofix/autofixRootCause.tsx", "static/app/components/events/autofix/autofixSolution.tsx", "static/app/components/events/autofix/autofixOutputStream.tsx", "static/app/views/seerExplorer/explorerPanel.tsx"]
+    },
+    {
+      "id": "integration-settings-ui",
+      "name": "Integration Settings UI",
+      "parent": "frontend-rendering-surfaces",
+      "description": "Integration directory, install link and configuration views that render provider-supplied descriptions as HTML.",
+      "files": ["static/app/views/integrationOrganizationLink/index.tsx", "static/app/views/settings/organizationIntegrations/configureIntegration.tsx", "static/app/views/settings/organizationIntegrations/detailedView/integrationLayout.tsx", "static/app/components/modals/sentryAppDetailsModal.tsx"]
+    },
+    {
+      "id": "plugin-and-form-fields",
+      "name": "Plugin Config & Form Fields",
+      "parent": "frontend-rendering-surfaces",
+      "description": "Legacy plugin config and generic form field components that inject plugin-provided help text as HTML.",
+      "files": ["static/app/components/pluginConfig.tsx", "static/app/components/deprecatedforms/genericField.tsx", "static/app/components/forms/fields/tableField.tsx"]
+    },
+    {
+      "id": "explore-frontend-views",
+      "name": "Explore & Trace Frontend Views",
+      "parent": "frontend-rendering-surfaces",
+      "description": "Trace explorer and schema-hint views that consume the events/trace endpoints and the Seer query translation.",
+      "files": ["static/app/views/explore/components/schemaHints/schemaHintsList.tsx", "static/app/views/traces/content.tsx"]
+    },
+    {
+      "id": "web-views-and-routing",
+      "name": "Server-side Web Views & Routing",
+      "parent": null,
+      "description": "Django urlconf and views serving the SPA shell, OAuth/auth pages, unsubscribe links and other non-API HTTP surfaces.",
+      "files": ["src/sentry/web/urls.py", "src/sentry/web/api.py"]
+    },
+    {
+      "id": "frontend-shell-views",
+      "name": "SPA Shell & Frontend Views",
+      "parent": "web-views-and-routing",
+      "description": "Django views rendering the react_page shell and error pages that seed the SPA.",
+      "files": ["src/sentry/web/frontend/react_page.py", "src/sentry/web/frontend/base.py"]
+    }
+  ],
+  "relations": [
+    {"from": "api-url-routing", "to": "endpoint-bases", "type": "routes-to", "label": "urlconf dispatches to endpoint classes"},
+    {"from": "endpoint-bases", "to": "permission-classes", "type": "depends-on", "label": "permission_classes enforced per method"},
+    {"from": "permission-classes", "to": "access-and-scopes", "type": "calls", "label": "checks request.access scopes"},
+    {"from": "access-and-scopes", "to": "member-models-and-roles", "type": "depends-on", "label": "roles resolve to scope sets"},
+    {"from": "endpoint-bases", "to": "api-authentication", "type": "depends-on", "label": "authenticators populate request.auth"},
+    {"from": "api-authentication", "to": "authentication-and-identity", "type": "depends-on", "label": "reuses session/user identity"},
+    {"from": "elevated-privileges", "to": "permission-classes", "type": "depends-on", "label": "SuperuserPermission consults elevated mode"},
+    {"from": "internal-feature-flags-endpoint", "to": "elevated-privileges", "type": "depends-on", "label": "guarded by SuperuserPermission"},
+    {"from": "internal-feature-flags-endpoint", "to": "config-discovery", "type": "calls", "label": "discover_configs() then configure()"},
+    {"from": "internal-feature-flags-endpoint", "to": "settings-importer", "type": "persists-through", "label": "writes lines into exec'd sentry.conf.py"},
+    {"from": "settings-importer", "to": "django-server-settings", "type": "imports", "label": "layers user config over defaults"},
+    {"from": "django-server-settings", "to": "request-middleware-stack", "type": "depends-on", "label": "declares MIDDLEWARE order"},
+    {"from": "internal-feature-flags-endpoint", "to": "django-server-settings", "type": "imports", "label": "reads SENTRY_EARLY_FEATURES"},
+    {"from": "config-discovery", "to": "settings-importer", "type": "calls", "label": "configure() invokes populate_module()"},
+    {"from": "self-hosted-deployment", "to": "settings-importer", "type": "persists-through", "label": "ships the sentry.conf.py that gets exec'd"},
+    {"from": "runtime-options", "to": "self-hosted-configuration", "type": "depends-on", "label": "option defaults seeded from settings"},
+    {"from": "system-options-endpoint", "to": "runtime-options", "type": "calls", "label": "reads and writes registered options"},
+    {"from": "system-options-endpoint", "to": "elevated-privileges", "type": "depends-on", "label": "superuser-only mutation"},
+    {"from": "api-rate-limiting", "to": "endpoint-bases", "type": "depends-on", "label": "middleware reads endpoint rate limit config"},
+    {"from": "api-rate-limiting", "to": "redis-buffer", "type": "persists-through", "label": "counters stored in Redis"},
+    {"from": "request-middleware-stack", "to": "api-url-routing", "type": "routes-to", "label": "middleware runs before urlconf dispatch"},
+    {"from": "auth-pipeline", "to": "sso-providers", "type": "calls", "label": "provider callbacks drive the pipeline"},
+    {"from": "auth-pipeline", "to": "invite-acceptance", "type": "calls", "label": "links SSO identity to a pending invite"},
+    {"from": "invite-acceptance", "to": "member-models-and-roles", "type": "persists-through", "label": "creates OrganizationMember rows"},
+    {"from": "member-invite-endpoints", "to": "endpoint-bases", "type": "depends-on", "label": "organization-scoped endpoint base"},
+    {"from": "member-invite-endpoints", "to": "member-models-and-roles", "type": "persists-through", "label": "writes invite and role records"},
+    {"from": "member-invite-endpoints", "to": "invite-acceptance", "type": "routes-to", "label": "issues tokens redeemed by the accept flow"},
+    {"from": "missing-org-members", "to": "endpoint-bases", "type": "depends-on", "label": "organization endpoint with member scopes"},
+    {"from": "missing-org-members", "to": "member-models-and-roles", "type": "calls", "label": "excludes existing members from results"},
+    {"from": "missing-org-members", "to": "member-invite-endpoints", "type": "routes-to", "label": "feeds invite suggestions in the UI"},
+    {"from": "conduit-demo-endpoint", "to": "conduit-auth", "type": "depends-on", "label": "uses conduit-specific auth helper"},
+    {"from": "conduit-demo-endpoint", "to": "conduit-tasks", "type": "calls", "label": "schedules conduit background work"},
+    {"from": "conduit-tasks", "to": "task-base-decorator", "type": "depends-on", "label": "registered via instrumented_task"},
+    {"from": "conduit-frontend", "to": "conduit-demo-endpoint", "type": "calls", "label": "frontend fetches conduit demo data"},
+    {"from": "conduit-demo-endpoint", "to": "api-url-routing", "type": "depends-on", "label": "route registered in api urls"},
+    {"from": "ingest-pipeline", "to": "relay-project-config", "type": "depends-on", "label": "Relay enforces generated project config"},
+    {"from": "relay-project-config", "to": "pii-scrubbing", "type": "imports", "label": "embeds datascrubbing rules"},
+    {"from": "relay-project-config", "to": "quotas-and-sampling", "type": "imports", "label": "embeds quotas and sampling biases"},
+    {"from": "ingest-pipeline", "to": "inbound-filters", "type": "calls", "label": "drops filtered events before save"},
+    {"from": "ingest-pipeline", "to": "event-manager", "type": "calls", "label": "consumer hands payload to EventManager.save"},
+    {"from": "event-manager", "to": "nodestore-abstraction", "type": "persists-through", "label": "stores raw event body by node id"},
+    {"from": "nodestore-abstraction", "to": "nodestore-django-backend", "type": "depends-on", "label": "default backend implementation"},
+    {"from": "event-manager", "to": "eventstream", "type": "calls", "label": "publishes insert to Kafka"},
+    {"from": "eventstream", "to": "post-process-tasks", "type": "routes-to", "label": "post-process forwarder triggers tasks"},
+    {"from": "post-process-tasks", "to": "redis-buffer", "type": "persists-through", "label": "buffers counters and pending signals"},
+    {"from": "redis-buffer", "to": "buffer-flush-task", "type": "routes-to", "label": "pending keys drained by flush task"},
+    {"from": "buffer-flush-task", "to": "task-base-decorator", "type": "depends-on", "label": "scheduled instrumented task"},
+    {"from": "event-manager", "to": "quotas-and-sampling", "type": "calls", "label": "consumes quota before accepting"},
+    {"from": "eventstore-reads", "to": "snuba-query-layer", "type": "calls", "label": "fetches event metadata from Snuba"},
+    {"from": "eventstore-reads", "to": "nodestore-abstraction", "type": "calls", "label": "hydrates bodies from nodestore"},
+    {"from": "organization-events-endpoints", "to": "snuba-query-layer", "type": "calls", "label": "translates search into Snuba queries"},
+    {"from": "organization-events-endpoints", "to": "endpoint-bases", "type": "depends-on", "label": "get_projects() scopes the query"},
+    {"from": "trace-endpoints", "to": "snuba-query-layer", "type": "calls", "label": "queries spans and trace items"},
+    {"from": "trace-endpoints", "to": "organization-events-endpoints", "type": "depends-on", "label": "shares organization events base"},
+    {"from": "seer-trace-explorer-ai", "to": "trace-endpoints", "type": "routes-to", "label": "AI-translated queries executed by trace endpoints"},
+    {"from": "seer-trace-explorer-ai", "to": "seer-rpc", "type": "calls", "label": "signed calls to the Seer service"},
+    {"from": "seer-explorer-chat", "to": "seer-rpc", "type": "calls", "label": "chat turns proxied over signed RPC"},
+    {"from": "seer-rpc", "to": "api-authentication", "type": "depends-on", "label": "signature-based authentication"},
+    {"from": "autofix-ui-rendering", "to": "seer-explorer-chat", "type": "calls", "label": "UI polls autofix/chat endpoints"},
+    {"from": "autofix-ui-rendering", "to": "markdown-html-rendering", "type": "depends-on", "label": "renders model output through marked"},
+    {"from": "markdown-html-rendering", "to": "frontend-api-client", "type": "depends-on", "label": "renders strings fetched from the API"},
+    {"from": "integration-settings-ui", "to": "integration-pipeline", "type": "calls", "label": "drives install/configure flows"},
+    {"from": "integration-settings-ui", "to": "markdown-html-rendering", "type": "depends-on", "label": "provider descriptions rendered as HTML"},
+    {"from": "plugin-and-form-fields", "to": "frontend-api-client", "type": "depends-on", "label": "field help text comes from plugin API"},
+    {"from": "explore-frontend-views", "to": "organization-events-endpoints", "type": "calls", "label": "explore views query events endpoints"},
+    {"from": "explore-frontend-views", "to": "seer-trace-explorer-ai", "type": "calls", "label": "natural-language query translation"},
+    {"from": "frontend-bootstrap", "to": "frontend-api-client", "type": "depends-on", "label": "seeds client with config and CSRF"},
+    {"from": "frontend-shell-views", "to": "frontend-bootstrap", "type": "routes-to", "label": "react_page renders client config blob"},
+    {"from": "web-views-and-routing", "to": "frontend-shell-views", "type": "routes-to", "label": "urlconf serves the SPA shell"},
+    {"from": "vercel-webhook", "to": "integration-http-clients", "type": "calls", "label": "calls back into the Vercel API"},
+    {"from": "vercel-webhook", "to": "task-base-decorator", "type": "routes-to", "label": "defers release work to tasks"},
+    {"from": "bitbucket-server-webhook", "to": "integration-pipeline", "type": "depends-on", "label": "resolves the installed integration"},
+    {"from": "github-webhook", "to": "post-process-tasks", "type": "routes-to", "label": "commit context feeds suspect commits"},
+    {"from": "slack-webhooks", "to": "api-authentication", "type": "depends-on", "label": "verifies Slack request signatures"},
+    {"from": "integrations-and-webhooks", "to": "outbox-replication", "type": "persists-through", "label": "control-silo webhooks forwarded to regions"},
+    {"from": "api-gateway-proxy", "to": "cross-silo-rpc", "type": "depends-on", "label": "region resolution over RPC"},
+    {"from": "api-gateway-proxy", "to": "api-url-routing", "type": "routes-to", "label": "proxies to region endpoints"},
+    {"from": "outbox-replication", "to": "task-and-worker-queue", "type": "depends-on", "label": "drain jobs run as tasks"},
+    {"from": "uptime-subscriptions", "to": "uptime-results-consumer", "type": "routes-to", "label": "published configs produce check results"},
+    {"from": "uptime-endpoints", "to": "uptime-subscriptions", "type": "calls", "label": "endpoints create/update subscriptions"},
+    {"from": "uptime-endpoints", "to": "endpoint-bases", "type": "depends-on", "label": "project-scoped permission checks"},
+    {"from": "uptime-results-consumer", "to": "post-process-tasks", "type": "routes-to", "label": "failures become issue occurrences"},
+    {"from": "deletion-tasks", "to": "nodestore-abstraction", "type": "calls", "label": "removes stored event bodies"},
+    {"from": "deletion-tasks", "to": "taskworker-runtime", "type": "depends-on", "label": "executed by workers on a schedule"},
+    {"from": "taskworker-runtime", "to": "task-base-decorator", "type": "imports", "label": "runs registered task activations"},
+    {"from": "post-process-tasks", "to": "integrations-and-webhooks", "type": "calls", "label": "sends alerts to integration providers"},
+    {"from": "web-views-and-routing", "to": "request-middleware-stack", "type": "depends-on", "label": "all web views pass through middleware"}
+  ]
+}
