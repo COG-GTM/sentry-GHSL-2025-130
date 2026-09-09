@@ -1,0 +1,353 @@
+[
+  {
+    "path": "src/sentry/conduit/endpoints/organization_conduit_demo.py",
+    "line": 27,
+    "severity": "low",
+    "title": "Unrate-limited member-triggerable endpoint queues a worker-blocking streaming task",
+    "description": "The Conduit demo endpoint lets any read-only organization member POST, and every request queues a background task that occupies a worker for about fifteen seconds while it publishes messages. No rate limit or deduplication is applied, so a single low-privilege account can queue tasks far faster than they drain. Sustained requests can saturate the task worker pool and delay unrelated background work.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/buffer/redis.py",
+    "line": 664,
+    "severity": "low",
+    "title": "Legacy pickle branch in Redis buffer deserializes buffered field values",
+    "description": "The Redis buffer picks its decoder from the first byte of each stored value and falls back to Python pickle deserialization for anything that is not JSON. Pickle data can construct arbitrary objects, so anyone able to write to the buffer Redis instance could run code inside a Sentry worker. No externally reachable write path was identified, so this is a defense-in-depth issue rather than a directly exploitable one.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/auth_v2/endpoints/auth_merge_user_accounts.py",
+    "line": 62,
+    "severity": "medium",
+    "title": "Account-merge verification code expiry is never enforced and the code is not consumed",
+    "description": "The account-merge flow checks that a verification code exists but never enforces its expiry, and the code is not invalidated after a successful merge. A code that leaks or is captured therefore remains valid indefinitely and can be replayed. Because merging accounts is irreversible and deletes the absorbed users, a replayed code can cause permanent account loss.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/codecov/endpoints/repository_token_regenerate/repository_token_regenerate.py",
+    "line": 20,
+    "severity": "medium",
+    "title": "Codecov upload-token regeneration is authorized by the read-only `org:read` scope",
+    "description": "The endpoint that rotates a repository's Codecov upload token authorizes POST with the read-only organization scope, so any ordinary member can trigger it and receive the new token in the response. Rotating the token breaks existing CI coverage uploads for that repository. The returned token also lets the caller push arbitrary coverage data for the repository.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/auth_v2/endpoints/base.py",
+    "line": 8,
+    "severity": "low",
+    "title": "AuthV2 shared secret compared with non-constant-time `==`",
+    "description": "The AuthV2 shared secret sent in a request header is compared using ordinary string equality, which returns as soon as it finds a differing byte. In principle this leaks timing information that could help an attacker recover the secret byte by byte. Practical remote exploitation over a network is very difficult, so the risk is low, but a constant-time comparison should be used.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/codecov/endpoints/sync_repos/sync_repos.py",
+    "line": 20,
+    "severity": "low",
+    "title": "Repository sync mutation authorized by read-only `org:read` scope",
+    "description": "The repository sync endpoint performs a state-changing operation but authorizes POST with the read-only organization scope. Any member can therefore trigger repository synchronization against the connected coverage and source-control providers. No credentials are exposed, but the mutation and the resulting third-party request fan-out should require a write-level scope.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/api/endpoints/chunk.py",
+    "line": 47,
+    "severity": "medium",
+    "title": "Gzip decompression bomb in chunk upload (memory-exhaustion DoS)",
+    "description": "The chunk upload endpoint fully decompresses a gzip request body into memory before any size limit is checked. A small, highly compressible payload can therefore expand into a very large in-memory buffer. An authenticated uploader can use this to exhaust memory on the web workers and degrade availability.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/api/endpoints/artifact_lookup.py",
+    "line": 93,
+    "severity": "medium",
+    "title": "Cross-project release-file download via org-only scoping in artifact-lookup",
+    "description": "In the artifact lookup endpoint, the release-file download branch filters only by organization while the parallel artifact-bundle branch correctly filters by project. A member with access to one project can therefore download release files and source maps belonging to other projects in the same organization. This can expose source code and build artifacts the caller should not be able to read.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/api/endpoints/debug_files.py",
+    "line": 561,
+    "severity": "low",
+    "title": "Unbounded checksum/chunk map in DIF assemble enables task/queue fan-out",
+    "description": "The debug-information-file assemble endpoint accepts an unbounded list of checksums and chunk identifiers, with no schema cap on how many entries a single request may contain. Each entry can spawn background work, so one request can fan out into a large number of queued tasks. This gives an authenticated caller an inexpensive way to amplify load on the task queue.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/preprod/api/bases/preprod_artifact_endpoint.py",
+    "line": 28,
+    "severity": "low",
+    "title": "Size-analysis comparison POST is authorized by project:read, letting read-only members write and queue async work",
+    "description": "The size-analysis comparison endpoint allows POST and PUT with the read-only project scope. Callers who should only be able to view data can therefore create comparison records and enqueue asynchronous processing jobs. No cross-tenant data is exposed, but mutating operations should require a write-level project scope.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/overwatch/endpoints/overwatch_rpc.py",
+    "line": 38,
+    "severity": "low",
+    "title": "Overwatch RPC signature check accepts an empty shared secret (diverges from compare_service_signature)",
+    "description": "The Overwatch RPC endpoint's signature check does not reject an empty or whitespace-only shared secret, unlike the shared helper used elsewhere for service signatures. If the secret is left unset or blank in configuration, the endpoint authenticates any caller. Exploitation depends on that misconfiguration, but the check should fail closed and use a constant-time comparison.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/preprod/api/endpoints/size_analysis/project_preprod_size_analysis_compare_download.py",
+    "line": 22,
+    "severity": "medium",
+    "title": "Size-analysis comparison download is scoped only by organization, leaking other projects' comparison files",
+    "description": "The size-analysis comparison download endpoint looks up the requested file by organization only, ignoring the project in the request path. A member of one project can therefore download size-analysis artifacts belonging to other projects in the same organization, including data about unreleased builds. A sibling endpoint scopes the same lookup by project, showing the intended behaviour.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/organizations/services/organization/impl.py",
+    "line": 283,
+    "severity": "low",
+    "title": "organization_service member mutators ignore the organization_id they are given",
+    "description": "Several organization member mutation helpers accept an organization identifier but do not include it when looking up the member record. If a caller ever passes an identifier from an untrusted source, the update could apply to a member of a different organization. All current callers derive the identifiers safely, so this is a latent robustness issue rather than an exploitable one today.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/integrations/bitbucket_server/webhook.py",
+    "line": 149,
+    "severity": "medium",
+    "title": "Bitbucket Server webhook accepts unauthenticated, unsigned push events (missing webhook authentication)",
+    "description": "The Bitbucket Server push webhook has no authentication and performs no signature or shared-secret verification, while every comparable source-control webhook does. Anyone who can guess the identifiers in the webhook URL can submit forged push events. That allows tampering with repository metadata and injecting fabricated commit history, and can cause outbound requests to an attacker-named host.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/uptime/endpoints/organization_uptime_stats.py",
+    "line": 49,
+    "severity": "low",
+    "title": "Unbounded rollup resolution and time range on uptime stats endpoint allows amplified Snuba queries and in-memory bucket expansion",
+    "description": "The uptime statistics endpoint disables the usual rollup restrictions and does not cap the requested time range or resolution. A caller can request a very long window at a very fine granularity, producing an expensive analytics query and a huge number of in-memory result buckets. Repeated requests can degrade availability of the API and the analytics backend.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/users/api/endpoints/user_details.py",
+    "line": 318,
+    "severity": "low",
+    "title": "User edit audit log records the entire request body, which can capture attacker- or user-supplied credential fields",
+    "description": "When privileged user attributes are changed, the audit log entry records the raw request body instead of only the validated fields. Any extra fields a client includes, potentially including passwords or tokens, are written verbatim into audit records. Anyone with access to audit logs could then read sensitive values that were never meant to be stored.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/uptime/endpoints/project_uptime_alert_index.py",
+    "line": 44,
+    "severity": "medium",
+    "title": "Uptime monitor creation accepts arbitrary internal URLs with no private-network validation (blind SSRF surface)",
+    "description": "Uptime monitors can be created with any URL, with no validation of the scheme or of whether the host resolves to a private or internal network address. The uptime checker then repeatedly requests that URL from inside the infrastructure, giving a blind server-side request forgery and internal port-scanning surface. The downstream checker may block private ranges, which would reduce the impact, but the API itself performs no validation.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/incidents/endpoints/organization_alert_rule_index.py",
+    "line": 215,
+    "severity": "medium",
+    "title": "Cross-tenant IDOR: OrganizationOnDemandRuleStatsEndpoint fetches project by id without org scoping",
+    "description": "The on-demand alert rule statistics endpoint loads the project directly by the identifier in the request without checking that it belongs to the caller's organization. A caller can therefore supply another organization's project identifier. The response only reveals a count of rule specifications, so the disclosed information is minimal, but the authorization check is missing.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/flags/providers.py",
+    "line": 551,
+    "severity": "medium",
+    "title": "Non-constant-time comparison of webhook signatures / auth tokens in flag webhook validators",
+    "description": "The feature-flag webhook validators compare incoming signatures and auth tokens with ordinary equality, which stops at the first differing byte. This leaks timing information about the expected secret on an endpoint that is otherwise unauthenticated. Recovering a secret this way over a network is impractical, but these comparisons should be constant time.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/api/endpoints/system_options.py",
+    "line": 19,
+    "severity": "low",
+    "title": "SYSTEM_OPTIONS_ALLOWLIST is a string, turning the options.admin bypass check into a substring match",
+    "description": "The allowlist that decides which system options bypass the stricter admin permission check is defined as a string rather than a collection, so membership testing becomes a substring match. An option whose name merely appears inside the allowlist text would pass the check. No currently registered option name is a substring of another, so this is a broken check rather than an exploitable bypass today.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/api/endpoints/system_options.py",
+    "line": 110,
+    "severity": "low",
+    "title": "Credential option values written to application logs in plaintext by system options PUT",
+    "description": "When system options are updated, option values flagged as credentials are written to the application logs in plaintext, even though the read path masks them. Secrets set through this endpoint therefore persist in log storage. Anyone with log access can read credentials they were never meant to see.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/seer/endpoints/trace_explorer_ai_setup.py",
+    "line": 74,
+    "severity": "low",
+    "title": "Missing project-level authorization on Trace Explorer AI setup",
+    "description": "The Trace Explorer AI setup endpoint uses project identifiers supplied in the request without resolving them through the standard project authorization helper. Sibling endpoints perform that check, so this one is inconsistent with the intended access model. The response returns only a status value, so no foreign data is reflected back and the impact is limited to defense in depth.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/seer/endpoints/trace_explorer_ai_query.py",
+    "line": 76,
+    "severity": "medium",
+    "title": "Missing project-level authorization on Trace Explorer AI query (cross-project/cross-tenant IDOR)",
+    "description": "The Trace Explorer AI query endpoint forwards request-supplied project identifiers to the AI service without verifying that the caller has access to those projects. A member who guesses or enumerates identifiers can retrieve span attribute data from projects, and potentially organizations, they do not belong to. Sibling endpoints resolve projects correctly, and the repository's own guidelines forbid this pattern.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/services/nodestore/django/backend.py",
+    "line": 25,
+    "severity": "low",
+    "title": "Legacy pickle.loads fallback in Django nodestore decode path",
+    "description": "The Django node storage backend falls back to Python pickle deserialization when a stored blob is not valid JSON, a legacy path kept for old data. Pickle data can execute code during deserialization, so poisoned rows in that table would run code in the application. No attacker-controlled write path to the table was found, making this defense in depth.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/seer/endpoints/organization_seer_explorer_update.py",
+    "line": 36,
+    "severity": "medium",
+    "title": "Explorer run update forwards route run_id to Seer without org scoping",
+    "description": "The Explorer run update endpoint passes the run identifier from the URL straight to the AI service without checking that the run belongs to the caller's organization. If the downstream service does not enforce ownership itself, a caller could modify another tenant's run. Confidence is limited because the enforcement may happen in a service outside this codebase.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/seer/endpoints/group_autofix_update.py",
+    "line": 56,
+    "severity": "medium",
+    "title": "Autofix run update accepts caller-supplied run_id with no run/group/org scoping",
+    "description": "The autofix update endpoint accepts a run identifier from the caller and forwards it to the AI service without verifying that the run belongs to the referenced issue or organization. If the downstream service trusts the identifier, a caller could mutate another tenant's autofix run. The actual impact depends on enforcement in a service outside this codebase.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/api/endpoints/organization_missing_org_members.py",
+    "line": 69,
+    "severity": "medium",
+    "title": "Raw SQL string interpolation of owner email domain in missing-org-members query",
+    "description": "The missing-organization-members query builds part of a raw SQL pattern by string-interpolating an owner's email domain, while the rest of the query is safely parameterized. If a stored email address containing SQL metacharacters can be created through a path that skips email validation, this becomes SQL injection. Such a path was not confirmed, but the value should be bound as a parameter regardless.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/api/endpoints/oauth_userinfo.py",
+    "line": 26,
+    "severity": "medium",
+    "title": "OIDC userinfo endpoint accepts expired tokens and tokens of inactive users",
+    "description": "The OpenID Connect userinfo endpoint implements its own bearer-token handling and skips the standard checks for token expiry and for whether the user and application are still active. Expired tokens, and tokens belonging to deprovisioned users, therefore still return identity information and personal data. Anyone holding such a stale token retains access that should have been revoked.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/api/endpoints/internal/feature_flags.py",
+    "line": 39,
+    "severity": "critical",
+    "title": "Python code injection into sentry.conf.py via internal feature-flags PUT (superuser RCE)",
+    "description": "The internal feature-flags update endpoint builds a line of Python source by interpolating a request-supplied value, writes it into the server's configuration file, and then loads that file. A caller who reaches the endpoint can therefore inject arbitrary Python and execute commands on the server. Access requires superuser permissions on a self-hosted deployment, which turns an administrative web role into full host compromise.",
+    "status": "resolved",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/core/endpoints/organization_member_invite/details.py",
+    "line": 49,
+    "severity": "high",
+    "title": "Cross-tenant IDOR: OrganizationMemberInvite loaded by raw id without organization scoping (GET/PUT/DELETE)",
+    "description": "The member-invite details endpoint loads the invite by its numeric identifier without checking that it belongs to the organization in the URL. Any member of any organization can therefore read, modify, approve, or delete another organization's pending invitations by guessing sequential identifiers. Approving a foreign invite can grant an outsider membership in the victim organization.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/core/endpoints/organization_member_invite/reinvite.py",
+    "line": 43,
+    "severity": "high",
+    "title": "Cross-tenant IDOR: reinvite endpoint loads OrganizationMemberInvite by raw id without organization scoping",
+    "description": "The reinvite endpoint has the same missing check as the invite details endpoint: it loads the invitation by identifier without confirming it belongs to the organization in the URL. A member of an unrelated organization can therefore re-send another organization's invitations. Doing so also regenerates the invite token and sends email to the invited address.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/replays/endpoints/data_export_notifications.py",
+    "line": 15,
+    "severity": "medium",
+    "title": "GCS transfer-job notification endpoint trusts unverified payloads (missing Pub/Sub origin verification)",
+    "description": "The cloud storage transfer notification endpoint only requires that the caller be authenticated and does not verify that the message actually originated from the cloud provider's messaging service. Any self-serve user who can guess a transfer job name and project can submit a forged notification. That causes the platform to re-run a storage transfer job using its own privileged service account.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/replays/endpoints/project_replay_summary.py",
+    "line": 120,
+    "severity": "medium",
+    "title": "Replay summary GET forwards replay_id to Seer without project/tenant scoping (cross-tenant summary disclosure)",
+    "description": "The read path of the replay summary endpoint forwards the requested replay identifier to the AI service without verifying that the replay belongs to the project in the URL, even though the write path does perform that check. Because summaries are stored by replay identifier alone, a caller who knows or guesses another tenant's identifier can retrieve their replay summary. That summary can describe user activity from a session the caller should not see.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/integrations/vercel/webhook.py",
+    "line": 145,
+    "severity": "high",
+    "title": "Vercel webhook DELETE handler skips signature verification (unauthenticated integration deletion)",
+    "description": "The Vercel webhook endpoint verifies the provider's signature on POST requests but performs no verification at all on DELETE requests, and the endpoint requires no authentication. A single unauthenticated request with a guessable team identifier can therefore destroy or hijack a victim organization's Vercel integration. Hijacking re-points the stored access credentials, so this is remotely exploitable with no prerequisites.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "static/app/views/explore/components/schemaHints/schemaHintsList.tsx",
+    "line": 228,
+    "severity": "medium",
+    "title": "DOM-based XSS via unsanitized innerHTML in schema-hints width measurement",
+    "description": "A hidden element used to measure text width is populated by assigning raw attribute-key text as HTML, bypassing the framework's normal escaping (the visible rendering path is safe). An attribute key influenced by attacker-sent data can therefore inject markup that executes JavaScript in a viewer's authenticated browser session. That could be used to act on the victim's behalf in the application.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/integrations/pagerduty/integration.py",
+    "line": 238,
+    "severity": "medium",
+    "title": "Open redirect via unvalidated `account` query param in PagerDuty install setup",
+    "description": "During PagerDuty installation setup, a query parameter is interpolated into the destination hostname without validation. An attacker can craft an installation link that sends the victim to a site they control. This supports phishing that appears to originate from a legitimate product flow.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "static/app/components/deprecatedforms/genericField.tsx",
+    "line": 79,
+    "severity": "low",
+    "title": "Unsanitized dangerouslySetInnerHTML on plugin field help text",
+    "description": "Plugin form field help text is rendered as raw HTML without sanitization. Today that text comes from static, developer-authored plugin definitions, so there is no attacker-controlled input. If help text ever becomes configurable, the same code path would allow script injection into the page.",
+    "status": "open",
+    "remediated": false
+  },
+  {
+    "path": "src/sentry/flags/providers.py",
+    "line": 585,
+    "severity": "low",
+    "title": "Non-constant-time comparison of webhook HMAC signature / auth token",
+    "description": "The feature-flag webhook validators compare the expected signature or token using ordinary equality rather than a constant-time comparison, which can leak timing information. This duplicates another finding covering the same code and vulnerability, and was dismissed in favour of the more detailed entry. The underlying recommendation is to use a constant-time comparison.",
+    "status": "dismissed",
+    "remediated": false
+  },
+  {
+    "path": "static/gsApp/views/subscriptionPage/partnershipNote.tsx",
+    "line": 21,
+    "severity": "low",
+    "title": "Unsanitized partner support note rendered via dangerouslySetInnerHTML",
+    "description": "The partner support note on the subscription page is rendered as raw HTML without sanitization. The note text is only writable through an internal provisioning backend, so there is no attacker-controlled path today. Sanitizing before rendering would remove the latent cross-site scripting risk.",
+    "status": "open",
+    "remediated": false
+  }
+]
