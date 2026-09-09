@@ -195,6 +195,9 @@ class BitbucketServerWebhookEndpoint(Endpoint):
             )
             return HttpResponse(status=400)
 
+        if not self._verify_signature(request, body, organization, integration_id):
+            return HttpResponse(status=401)
+
         try:
             handler = self.get_handler(request.META["HTTP_X_EVENT_KEY"])
         except KeyError:
@@ -207,9 +210,6 @@ class BitbucketServerWebhookEndpoint(Endpoint):
 
         if not handler:
             return HttpResponse(status=204)
-
-        if not self._verify_signature(request, body, organization, integration_id):
-            return HttpResponse(status=401)
 
         try:
             event = orjson.loads(body)

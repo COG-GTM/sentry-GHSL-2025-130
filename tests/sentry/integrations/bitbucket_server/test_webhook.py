@@ -73,13 +73,16 @@ class WebhookTestBase(APITestCase):
             }
         )
 
-    def signature_headers(self, body: bytes, secret: str | None = None) -> dict[str, str]:
+    def signature_headers(
+        self, body: bytes, secret: str | None = None, event_key: str | None = "repo:refs_changed"
+    ) -> dict[str, str]:
         signature = hmac.new(
             (secret or self.webhook_secret).encode("utf-8"), body, hashlib.sha256
         ).hexdigest()
-        return dict(
-            HTTP_X_EVENT_KEY="repo:refs_changed", HTTP_X_HUB_SIGNATURE=f"sha256={signature}"
-        )
+        headers = {"HTTP_X_HUB_SIGNATURE": f"sha256={signature}"}
+        if event_key is not None:
+            headers["HTTP_X_EVENT_KEY"] = event_key
+        return headers
 
     def send_webhook(self) -> None:
         self.get_success_response(
@@ -160,15 +163,32 @@ class WebhookPostTest(WebhookTestBase):
         )
 
     def test_missing_event(self) -> None:
-        self.get_error_response(self.organization.id, self.integration.id, status_code=400)
+        self.get_error_response(
+            self.organization.id,
+            self.integration.id,
+            raw_data=REFS_CHANGED_EXAMPLE,
+            extra_headers=self.signature_headers(REFS_CHANGED_EXAMPLE, event_key=None),
+            status_code=400,
+        )
 
     def test_unregistered_event(self) -> None:
         self.get_success_response(
             self.organization.id,
             self.integration.id,
-            extra_headers=dict(HTTP_X_EVENT_KEY="UnregisteredEvent"),
+            extra_headers=self.signature_headers(
+                REFS_CHANGED_EXAMPLE, event_key="UnregisteredEvent"
+            ),
             raw_data=REFS_CHANGED_EXAMPLE,
             status_code=204,
+        )
+
+    def test_unregistered_event_requires_signature(self) -> None:
+        self.get_error_response(
+            self.organization.id,
+            self.integration.id,
+            extra_headers=dict(HTTP_X_EVENT_KEY="UnregisteredEvent"),
+            raw_data=REFS_CHANGED_EXAMPLE,
+            status_code=401,
         )
 
 

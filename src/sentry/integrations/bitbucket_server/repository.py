@@ -4,6 +4,7 @@ from typing import Any
 from django.core.cache import cache
 from django.urls import reverse
 
+from sentry import locks
 from sentry.integrations.services.integration.service import integration_service
 from sentry.integrations.types import IntegrationProviderSlug
 from sentry.models.apitoken import generate_token
@@ -83,15 +84,27 @@ class BitbucketServerRepositoryProvider(IntegrationRepositoryProvider):
             }
 
     def get_webhook_secret(self, installation) -> str:
-        metadata = installation.model.metadata
-        secret = metadata.get("webhook_secret")
-        if not secret:
-            secret = generate_token()
-            integration_service.update_integration(
-                integration_id=installation.model.id,
-                metadata={**metadata, "webhook_secret": secret},
-            )
-            metadata["webhook_secret"] = secret
+        integration_id = installation.model.id
+        secret = installation.model.metadata.get("webhook_secret")
+        if secret:
+            return secret
+
+        lock = locks.get(
+            f"bitbucket_server:webhook_secret:{integration_id}",
+            duration=10,
+            name="bitbucket_server_webhook_secret",
+        )
+        with lock.acquire():
+            integration = integration_service.get_integration(integration_id=integration_id)
+            metadata = integration.metadata if integration else installation.model.metadata
+            secret = metadata.get("webhook_secret")
+            if not secret:
+                secret = generate_token()
+                integration_service.update_integration(
+                    integration_id=integration_id,
+                    metadata={**metadata, "webhook_secret": secret},
+                )
+        installation.model.metadata["webhook_secret"] = secret
         return secret
 
     def on_delete_repository(self, repo):
