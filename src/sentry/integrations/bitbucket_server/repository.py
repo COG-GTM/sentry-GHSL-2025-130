@@ -4,7 +4,9 @@ from typing import Any
 from django.core.cache import cache
 from django.urls import reverse
 
+from sentry.integrations.services.integration.service import integration_service
 from sentry.integrations.types import IntegrationProviderSlug
+from sentry.models.apitoken import generate_token
 from sentry.organizations.services.organization.model import RpcOrganization
 from sentry.plugins.providers.integration_repository import (
     IntegrationRepositoryProvider,
@@ -39,6 +41,7 @@ class BitbucketServerRepositoryProvider(IntegrationRepositoryProvider):
     ) -> RepositoryConfig:
         installation = self.get_installation(data.get("installation"), organization.id)
         client = installation.get_client()
+        secret = self.get_webhook_secret(installation)
 
         try:
             resp = client.create_hook(
@@ -57,6 +60,7 @@ class BitbucketServerRepositoryProvider(IntegrationRepositoryProvider):
                     ),
                     "active": True,
                     "events": ["repo:refs_changed", "pr:merged"],
+                    "configuration": {"secret": secret},
                 },
             )
         except Exception as e:
@@ -77,6 +81,18 @@ class BitbucketServerRepositoryProvider(IntegrationRepositoryProvider):
                 },
                 "integration_id": data["installation"],
             }
+
+    def get_webhook_secret(self, installation) -> str:
+        metadata = installation.model.metadata
+        secret = metadata.get("webhook_secret")
+        if not secret:
+            secret = generate_token()
+            integration_service.update_integration(
+                integration_id=installation.model.id,
+                metadata={**metadata, "webhook_secret": secret},
+            )
+            metadata["webhook_secret"] = secret
+        return secret
 
     def on_delete_repository(self, repo):
         installation = self.get_installation(repo.integration_id, repo.organization_id)
